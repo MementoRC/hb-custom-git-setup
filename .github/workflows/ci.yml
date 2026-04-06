@@ -18,10 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run ShellCheck on all scripts
         run: |
-          find scripts/ -name "*.sh" -not -name "*.old" | while read f; do
-            echo "Checking $f..."
-            shellcheck -x -S warning "$f" || exit 1
-          done
+          find scripts/ -name "*.sh" -not -name "*.old" -print0 | xargs -0 shellcheck -x -S error
 
   yaml-lint:
     name: "YAML Lint"
