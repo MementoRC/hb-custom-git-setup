@@ -1,0 +1,41 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+permissions:
+  contents: read
+
+jobs:
+  secrets-scan:
+    name: Secrets Detection
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install detect-secrets
+      run: pip install detect-secrets
+    - name: Run secrets detection
+      run: |
+        detect-secrets scan --baseline .secrets.baseline --all-files
+        if [ $? -ne 0 ]; then
+          echo "New secrets detected!"
+          exit 1
+        fi
+
+  security-status:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [secrets-scan]
+    if: always()
+    steps:
+      - name: Report Security Status
+        run: |
+          if [[ "${{ needs.secrets-scan.result }}" == "success" ]]; then
+            echo "All Security Scanning jobs passed"
+          else
+            echo "Security Scanning failed"
+            exit 1
+          fi

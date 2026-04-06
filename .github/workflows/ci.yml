@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: "ShellCheck Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck on all scripts
+        run: |
+          find scripts/ -name "*.sh" -not -name "*.old" | while read f; do
+            echo "Checking $f..."
+            shellcheck -x -S warning "$f" || exit 1
+          done
+
+  yaml-lint:
+    name: "YAML Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint YAML files
+        run: yamllint -d relaxed configs/
+
+  branch-policy:
+    name: "Branch Policy"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    steps:
+      - name: Check source branch
+        run: |
+          if [ "${{ github.head_ref }}" != "development" ]; then
+            echo "PRs to main must come from development branch"
+            exit 1
+          fi
+
+  ci-success:
+    name: "CI Success"
+    runs-on: ubuntu-latest
+    needs: [shellcheck, yaml-lint]
+    if: always()
+    steps:
+      - name: Check CI status
+        run: |
+          if [ "${{ needs.shellcheck.result }}" != "success" ] || [ "${{ needs.yaml-lint.result }}" != "success" ]; then
+            echo "CI failed"
+            exit 1
+          fi
