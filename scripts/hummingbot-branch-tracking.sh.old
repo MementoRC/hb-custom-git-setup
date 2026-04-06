@@ -1,0 +1,708 @@
+#!/bin/bash
+###############################################################################
+# branch_tracker.sh
+# -----------------
+# This script reads a YAML configuration (branch-tracking.yaml) and attempts
+# to keep certain target branches up to date by merging changes from "tracked"
+# branches. It logs operations and writes status entries to a separate status
+# file. If a merge actually introduces new commits, it optionally runs tests.
+#
+# Usage:
+#   ./branch_tracker.sh
+###############################################################################
+
+SCRIPT_DIR="$(dirname "$0")"
+source "$SCRIPT_DIR/common.sh"
+
+TEMP_DIR="${SCRIPT_DIR}/.tmp"
+TEMP_LOG="${TEMP_DIR}/test_output.log"
+
+###############################################################################
+# Overridable Variables
+###############################################################################
+: "${DEVELOPMENT_BRANCH:="development"}"
+: "${FEATURE_BRANCH:="bleeding-edge"}"
+: "${LOCAL_REPO_DIR:="$HOME/PycharmProjects/Hummingbot/hummingbot"}"
+
+setup_temp_directory() {
+    # Create temp directory if it doesn't exist
+    mkdir -p "${TEMP_DIR}" || {
+        log_message "${RED}Failed to create temporary directory${NC}"
+        exit 1
+    }
+
+    # Ensure the log file exists
+    touch "${TEMP_LOG}" || {
+        log_message "${RED}Failed to create temporary log file${NC}"
+        exit 1
+    }
+}
+
+###############################################################################
+# run_maintenance
+# ---------------
+# Runs maintenance tasks (e.g., cleanup, dependency updates) on the target branch.
+###############################################################################
+run_maintenance() {
+    local target_branch="$1"
+
+    log_message "${YELLOW}Running maintenance tasks for '$target_branch'...${NC}"
+
+    # Switch to the target branch
+    git checkout "$target_branch" || {
+        log_message "${RED}Failed to checkout '$target_branch' for maintenance.${NC}"
+        return 1
+    }
+
+    # Example maintenance tasks (customize as needed):
+    # Remove stale branches
+    # I don't want that: git branch --merged | grep -v "\*" | xargs -n 1 git branch -d
+
+    # Update dependencies (if applicable)
+    # Example for Python:
+    # python -m pip install --upgrade -r requirements.txt
+
+    # Run any other maintenance scripts or commands
+
+    log_message "${GREEN}Maintenance tasks completed for '$target_branch'.${NC}"
+    return 0
+}
+
+###############################################################################
+# check_mergeability
+# ---------------
+# Checks the mergeability of a branch into the target branch.
+###############################################################################
+check_mergeability() {
+    local branch="$1"
+    local target="$2"
+
+    log_message "${YELLOW}Checking if $branch is mergeable into $target...${NC}"
+
+    # Store current branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    # Make sure working directory is clean
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        log_message "${RED}Cannot check mergeability with uncommitted changes${NC}"
+        return 1
+    fi
+
+    # Switch to target branch
+    git checkout "$target" || {
+        log_message "${RED}Failed to checkout $target${NC}"
+        git checkout "$current_branch"
+        return 1
+    }
+
+    # Try merge with --no-commit
+    if git merge --no-commit --no-ff "$branch"; then
+        log_message "${GREEN}$branch is mergeable into $target${NC}"
+        git merge --abort
+        git checkout "$current_branch"
+        return 0
+    else
+        log_message "${RED}$branch has conflicts with $target${NC}"
+        git merge --abort
+        git checkout "$current_branch"
+        return 1
+    fi
+}
+
+ensure_branch_mergeability() {
+    local branch="$1"
+    local dev_branch="$DEVELOPMENT_BRANCH"
+
+    if ! check_mergeability "$branch" "$dev_branch"; then
+        log_message "${RED}Warning: $branch not mergeable into $dev_branch${NC}"
+        add_status_entry "$branch" "$dev_branch" "WARNING" "Branch not mergeable into development"
+        return 1
+    fi
+    return 0
+}
+
+###############################################################################
+# handle_working_directory
+# --------------------
+# Checks (or stash) if the working directory is clean. If not, optionally stashes changes.
+###############################################################################
+handle_working_directory() {
+    local action="$1"  # Either "check" or "stash"
+
+    if [ "$action" = "check" ]; then
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            log_message "${RED}Working directory is not clean. Please commit or stash your changes first.${NC}"
+            log_message "${YELLOW}Modified files:${NC}"
+            git status --short
+            return 1
+        fi
+        return 0
+    elif [ "$action" = "stash" ]; then
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            log_message "${YELLOW}Stashing local changes...${NC}"
+            git stash push -m "Auto-stash before branch rebuild"
+            return $?
+        fi
+        return 0
+    fi
+}
+
+ensure_changes_committed() {
+    local target="$1"
+    local source="$2"
+
+    # Check if we have changes to commit
+    if git diff --quiet && git diff --cached --quiet; then
+        log_message "${GREEN}No changes to commit${NC}"
+        return 0
+    fi
+
+    # Add all changes
+    git add -A || {
+        log_message "${RED}Failed to stage changes${NC}"
+        return 1
+    }
+
+    # Try to commit without GPG signing first
+    if ! git -c commit.gpgsign=false commit -m "Auto-merge $source into $target"; then
+        log_message "${RED}Failed to commit changes${NC}"
+        return 1
+    fi
+
+    return 0
+}
+
+ensure_clean_state() {
+    local branch="$1"
+
+    # Get list of untracked files
+    local untracked_files
+    untracked_files=$(git ls-files --others --exclude-standard)
+
+    if [ -n "$untracked_files" ]; then
+        log_message "${YELLOW}Found untracked files after merging into $branch:${NC}"
+        echo "$untracked_files"
+
+        # Add untracked files
+        log_message "${YELLOW}Adding new files to git...${NC}"
+        git add .
+
+        # Commit them if there are staged changes
+        if ! git diff --cached --quiet; then
+            git commit -m "Auto-add new files from merge" || {
+                log_message "${RED}Failed to commit new files${NC}"
+                return 1
+            }
+        fi
+    fi
+
+    return 0
+}
+
+handle_merge_result() {
+    local target="$1"
+    local source="$2"
+    local merge_result=$3
+
+    if [ $merge_result -eq 0 ]; then
+        log_message "${GREEN}Successfully merged $source into $target${NC}"
+
+        # Ensure all new files are tracked
+        ensure_clean_state "$target" || {
+            log_message "${RED}Failed to handle new files after merge${NC}"
+            return 1
+        }
+
+        return 0
+    else
+        log_message "${RED}Merge failed for $source into $target${NC}"
+        return 1
+    fi
+}
+
+###############################################################################
+# run_tests_for_branch
+# --------------------
+# Invokes a test script after merging. If tests fail, optionally revert HEAD.
+###############################################################################
+run_tests_for_branch() {
+    local target_branch="$1"
+    local source_branch="$2"
+    local allow_missing_tests=${3:-false}  # Default to false if not specified
+
+    log_message "${YELLOW}Running tests for '$target_branch' after merging '$source_branch'...${NC}"
+
+    setup_temp_directory
+
+    local test_script_path="${SCRIPT_DIR}/hummingbot-select-test-verifier.sh"
+    local base_ref="origin/development"
+    local compare_ref="$target_branch"
+
+    if [ ! -x "$test_script_path" ]; then
+        log_message "${RED}Test script not found or not executable: $test_script_path${NC}"
+        return 1
+    fi
+
+    > "${TEMP_LOG}"
+
+    # Run tests and capture output
+    "${test_script_path}" "$base_ref" "$compare_ref" > "${TEMP_LOG}" 2>&1
+    local exit_code=$?
+
+    log_message "${YELLOW}Test Output:${NC}"
+    cat "${TEMP_LOG}"
+
+    # Process results
+    local test_status
+    test_status=$(classify_test_result "${TEMP_LOG}" "$allow_missing_tests")
+
+    case $test_status in
+        "PASSED")
+            log_message "${GREEN}All tests PASSED for '$target_branch'${NC}"
+            add_status_entry "$target_branch" "$source_branch" "SUCCESS" "All tests passed"
+            return 0
+            ;;
+        "WARN")
+            log_message "${YELLOW}Tests completed with warnings for '$target_branch'${NC}"
+            add_status_entry "$target_branch" "$source_branch" "WARNING" "Tests passed with warnings"
+            return 0
+            ;;
+        "FAILED")
+            log_message "${RED}Tests FAILED for '$target_branch'${NC}"
+            add_status_entry "$target_branch" "$source_branch" "ERROR" "Tests failed"
+            return 1
+            ;;
+        *)
+            log_message "${RED}Unknown test status for '$target_branch'${NC}"
+            add_status_entry "$target_branch" "$source_branch" "ERROR" "Unknown test status"
+            return 1
+            ;;
+    esac
+}
+
+classify_test_result() {
+    local output_file="$1"
+    local allow_missing_tests="$2"  # Set to "true" to allow missing test files
+
+    # Check for explicit failures first
+    if grep -q "FAILED" "$output_file"; then
+        echo "FAILED"
+        return 1
+    fi
+
+    # Handle missing test files
+    if grep -q "No test file found for" "$output_file"; then
+        if [ "$allow_missing_tests" = "true" ]; then
+            log_message "${YELLOW}Warning: Missing test files detected but allowing continuation${NC}"
+            echo "WARN"
+            return 0
+        else
+            log_message "${RED}Error: Missing test files detected${NC}"
+            echo "FAILED"
+            return 1
+        fi
+    fi
+
+    # Check for successful tests
+    if grep -q "All tests passed" "$output_file"; then
+        echo "PASSED"
+        return 0
+    fi
+
+    echo "UNKNOWN"
+    return 1
+}
+
+check_for_changes() {
+    local base_ref="$1"
+    local compare_ref="$2"
+
+    # Get list of changed files
+    local changed_files
+    changed_files=$(git diff --name-only "$base_ref" "$compare_ref")
+
+    if [ -z "$changed_files" ]; then
+        log_message "${YELLOW}No changes detected between $base_ref and $compare_ref${NC}"
+        return 1
+    fi
+
+    log_message "${BLUE}Changed files:${NC}"
+    echo "$changed_files"
+    return 0
+}
+debug_test_environment() {
+    local test_script_path="$1"
+
+    log_message "${YELLOW}Debug Information:${NC}"
+    log_message "Current directory: $(pwd)"
+    log_message "Test script path: $test_script_path"
+    log_message "Test script permissions: $(ls -l "$test_script_path" 2>/dev/null || echo 'Not found')"
+    log_message "Environment variables:"
+    env | grep -i "test\|path\|python"
+    log_message "Git status:"
+    git status --short
+}
+
+###############################################################################
+# branch_exists
+# -------------
+# Checks if a branch exists locally or remotely. Returns "local", "remote", or
+# "none".
+###############################################################################
+branch_exists() {
+    local branch="$1"
+    # Check local
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        echo "local"
+        return 0
+    fi
+    # Check remote
+    if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+        echo "remote"
+        return 0
+    fi
+    echo "none"
+    return 1
+}
+
+###############################################################################
+# rebase_branch
+# ------------
+# Rebases a branch onto the target branch.
+###############################################################################
+rebase_branch() {
+    local target="$1"
+    local branch="$2"
+
+    log_message "${YELLOW}Rebasing $branch onto $target...${NC}"
+
+    git checkout "$branch" || {
+        log_message "${RED}Failed to checkout $branch${NC}"
+        return 1
+    }
+
+    git rebase "$target" || {
+        log_message "${RED}Rebase failed or conflict. Resolve manually.${NC}"
+        git rebase --abort
+        return 1
+    }
+
+    log_message "${GREEN}Successfully rebased $branch onto $target${NC}"
+}
+
+###############################################################################
+# sync_branch
+# -----------
+# Merges the tracked branch into the target branch (if new commits exist).
+# If a new merge happens, calls run_tests_for_branch.
+###############################################################################
+sync_branch() {
+    local target="$1"
+    local branch="$2"
+    
+    log_message "${YELLOW}Processing $branch for $target...${NC}"
+
+    # Save current state
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    local untracked_conflicts
+    untracked_conflicts=$(git clean -n | cut -d' ' -f3)
+    if [ -n "$untracked_conflicts" ]; then
+        log_message "${RED}Found untracked files that would conflict:${NC}"
+        echo "$untracked_conflicts"
+        log_message "${YELLOW}Please commit or remove these files first${NC}"
+        return 1
+    fi
+
+    local branch_location
+    branch_location="$(branch_exists "$branch")"
+    
+    # Add mergeability check for feature branches
+    if [ "$target" = "$FEATURE_BRANCH" ]; then
+        if ! ensure_branch_mergeability "$branch"; then
+            log_message "${RED}Skipping merge due to development mergeability issues${NC}"
+            return 1
+        fi
+    fi
+
+    case $branch_location in
+        "none")
+            log_message "${RED}Branch $branch does not exist locally or in remote${NC}"
+            add_status_entry "$target" "$branch" "WARNING" "Branch not found locally or remotely"
+            return 1
+            ;;
+        "local")
+            log_message "${BLUE}Branch $branch exists locally${NC}"
+            ;;
+        "remote")
+            log_message "${BLUE}Branch $branch exists in remote${NC}"
+            git fetch origin "$branch" >/dev/null 2>&1
+            ;;
+    esac
+    
+    local ref_to_use
+    if [ "$branch_location" = "local" ]; then
+        ref_to_use="$branch"
+        # If it's local only, skip remote fetch
+        if ! git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+            log_message "${YELLOW}Branch $branch is only local, not on remote${NC}"
+        fi
+    else
+        ref_to_use="origin/$branch"
+        git fetch origin "$branch" >/dev/null 2>&1
+    fi
+    
+    local branch_hash
+    branch_hash="$(git rev-parse "$ref_to_use")"
+    
+    # Check if target already includes all commits from branch
+    if ! git merge-base --is-ancestor "$branch_hash" "$target" 2>/dev/null; then
+        log_message "${YELLOW}New changes detected in $branch${NC}"
+
+        # Switch to target
+        git checkout "$target" || {
+            log_message "${RED}Failed to checkout $target${NC}"
+            add_status_entry "$target" "$branch" "ERROR" "Failed to checkout target branch"
+            return 1
+        }
+
+        if ! git diff --quiet HEAD; then
+            log_message "${YELLOW}Cleaning up uncommitted changes before merge attempt...${NC}"
+            git reset --hard HEAD
+        fi
+
+        # Merge
+        if git merge --no-ff "$ref_to_use" -m "Auto-merge $branch into $target"; then
+            if ! handle_merge_result "$target" "$branch" $?; then
+                log_message "${RED}Failed to handle merge result${NC}"
+                return 1
+            fi
+
+            log_message "${GREEN}Successfully merged $branch into $target${NC}"
+            add_status_entry "$target" "$branch" "SUCCESS" "Merged new changes"
+
+            if ! ensure_changes_committed "$target" "$branch"; then
+                log_message "${RED}Failed to commit merge changes${NC}"
+                git merge --abort
+                return 1
+            fi
+
+            # Verify the files exist
+            log_message "${YELLOW}Verifying merged files...${NC}"
+            # git ls-tree -r HEAD --name-only
+
+            # Run tests after successful merge
+            if ! run_tests_for_branch "$target" "$branch" "true"; then
+                log_message "${RED}Tests failed after merge - attempting cleanup${NC}"
+                git reset --hard HEAD^
+                return 1
+            fi
+        else
+            log_message "${RED}Merge conflicts detected while merging $branch${NC}"
+            add_status_entry "$target" "$branch" "ERROR" "Merge conflicts detected"
+            git merge --abort
+            return 1
+        fi
+    else
+        log_message "${GREEN}$branch is already up to date in $target${NC}"
+        add_status_entry "$target" "$branch" "INFO" "No new changes to merge"
+    fi
+
+    # Restore original branch if needed
+    if [ "$current_branch" != "$(git rev-parse --abbrev-ref HEAD)" ]; then
+        git checkout "$current_branch"
+    fi
+}
+
+###############################################################################
+# get_target_branches
+# -------------------
+# Reads the YAML config (branch-tracking.yaml) for target branch keys.
+###############################################################################
+get_target_branches() {
+    local result
+    result="$(yq -r '.target_branches | keys[]' "$BRANCH_CONFIG" 2>/dev/null)"
+    echo "$result"
+}
+
+###############################################################################
+# get_tracked_branches
+# --------------------
+# Reads the 'tracked_branches[].name' array for a given target in the YAML config.
+###############################################################################
+get_tracked_branches() {
+    local target="$1"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[].name" "$BRANCH_CONFIG" 2>/dev/null)"
+    echo "$result"
+}
+
+###############################################################################
+# is_branch_enabled
+# -----------------
+# Checks whether the branch is flagged 'enabled' in the YAML config.
+###############################################################################
+is_branch_enabled() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").enabled" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ]; then
+        echo "false"
+    else
+        echo "$result"
+    fi
+}
+
+###############################################################################
+# is_branch_permanent
+# -------------------
+# Checks the 'permanent' flag in the YAML config.
+###############################################################################
+is_branch_permanent() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").permanent" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo "false"
+    else
+        echo "$result"
+    fi
+}
+
+###############################################################################
+# is_branch_disable_when_in_development
+# -------------------------------------
+# Checks the 'disable_when_in_development' flag in the YAML config.
+###############################################################################
+is_branch_disable_when_in_development() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").disable_when_in_development" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo "false"
+    else
+        echo "$result"
+    fi
+}
+
+###############################################################################
+# is_branch_bleed_only
+# --------------------
+# Checks the 'bleed_only' flag in the YAML config.
+###############################################################################
+is_branch_feature_only() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").feature_only" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo "false"
+    else
+        echo "$result"
+    fi
+}
+
+###############################################################################
+# Main Execution
+###############################################################################
+log_message "Starting branch tracking process..."
+
+ensure_directories
+update_status
+
+# Go to the repository directory
+cd "$REPO_PATH" || {
+    log_message "${RED}Failed to change to repository directory: $REPO_PATH${NC}"
+    exit 1
+}
+
+# Validate environment
+if ! validate_environment; then
+    log_message "${RED}Environment validation failed.${NC}"
+    exit 1
+fi
+
+FORCE_REBUILD=false
+if [ "$1" = "--rebuild" ]; then
+    FORCE_REBUILD=true
+    log_message "${YELLOW}Force rebuild mode enabled${NC}"
+    # Check working directory state
+    if ! handle_working_directory "check"; then
+        log_message "${RED}Cannot proceed with rebuild while working directory has uncommitted changes.${NC}"
+        log_message "${YELLOW}Please commit or stash your changes and try again.${NC}"
+        exit 1
+    fi
+    # Ensure the new branch is properly initialized
+    git commit --allow-empty -m "Initialize $FEATURE_BRANCH"
+fi
+
+log_message "${BLUE}Reading configuration from: $BRANCH_CONFIG${NC}"
+
+# For each target branch in the config
+while IFS= read -r target_branch; do
+    [ -z "$target_branch" ] && continue
+    
+    if [ "$FORCE_REBUILD" = true ] && [ "$target_branch" = "$FEATURE_BRANCH" ]; then
+        log_message "${YELLOW}Rebuilding $FEATURE_BRANCH from scratch...${NC}"
+
+        # Ensure we're on development first
+        git checkout "$DEVELOPMENT_BRANCH" || {
+            log_message "${RED}Failed to checkout $DEVELOPMENT_BRANCH${NC}"
+            exit 1
+        }
+
+        # Delete and recreate the feature branch
+        git branch -D "$FEATURE_BRANCH" 2>/dev/null || true
+        git checkout -b "$FEATURE_BRANCH" || {
+            log_message "${RED}Failed to create new $FEATURE_BRANCH${NC}"
+            exit 1
+        }
+
+        # Reset to match development
+        git reset --hard "$DEVELOPMENT_BRANCH" || {
+            log_message "${RED}Failed to reset $FEATURE_BRANCH to $DEVELOPMENT_BRANCH${NC}"
+            exit 1
+        }
+    fi
+
+    log_message "${BLUE}Processing target branch: $target_branch${NC}"
+    
+    # Run maintenance tasks *before* merging
+    # Nothing yet to do here
+    # run_maintenance "$target_branch" || {
+    #     log_message "${RED}Maintenance failed for '$target_branch'. Skipping merges.${NC}"
+    #     continue  # Skip to the next target branch if maintenance fails
+    # }
+
+    # For each tracked branch under that target
+    while IFS= read -r branch; do
+        [ -z "$branch" ] && continue
+        
+        enabled="$(is_branch_enabled "$target_branch" "$branch")"
+        permanent="$(is_branch_permanent "$target_branch" "$branch")"
+        feature_only="$(is_branch_feature_only "$target_branch" "$branch")"
+
+        if [ "$enabled" = "true" ] && [ "$permanent" != "true" ]; then
+            if [ "$target_branch" == "$FEATURE_BRANCH" ]; then
+                # if [ "$feature_only" != "true" ]; then
+                #   rebase_branch "$DEVELOPMENT_BRANCH" "$branch"
+                # fi
+                # rebase_branch "$DEVELOPMENT_BRANCH" "$branch" || {
+                #     log_message "${RED}Failed to rebase $branch onto $DEVELOPMENT_BRANCH. Skipping merge.${NC}"
+                #     exit 1
+                # }
+                sync_branch "$target_branch" "$branch"
+            fi
+        fi
+    done < <(get_tracked_branches "$target_branch")
+
+done < <(get_target_branches)
+
+log_message "${GREEN}Branch tracking completed successfully!${NC}"
+exit 0
+

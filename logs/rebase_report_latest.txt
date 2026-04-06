@@ -1,0 +1,27 @@
+Rebase Compatibility Report
+============================
+Date:     2026-03-25 16:21:58
+Target:   bleeding-edge
+Commit:   c5b8f04ef
+
+Clean (7):
+  [OK] _for_bleed/environment (already merged)
+  [OK] _for_bleed/add-executor-lock-unlock-collateral (already merged)
+  [OK] _for_bleed/candles-public-api (already merged)
+  [OK] _for_bleed/progressive-executor-trading-v2 (already merged)
+  [OK] _for_bleed/test-fixes (0 commits)
+  [OK] _for_bleed/pixi-workspace (already merged)
+  [OK] _for_bleed_manual/kraken-tweaks (0 commits)
+
+Conflicts (1):
+  [CONFLICT] _for_bleed/pixi-ci-migration
+    - pyproject.toml
+
+Skipped (6):
+  [SKIP] feat/add-new-order-types (disabled)
+  [SKIP] feat/add-executor-factory (disabled)
+  [SKIP] feat/kraken-new-order-types (disabled)
+  [SKIP] feat/position-exchange-executor (disabled)
+  [SKIP] feat/coinbase_advanced_trade_candles (disabled)
+  [SKIP] feat/conda-environment-upgrade (disabled)
+

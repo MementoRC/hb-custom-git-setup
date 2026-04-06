@@ -1,0 +1,180 @@
+
+╔══════════════════════════════[ [0;34mCron Sync Cycle[0m ]═══════════════════════════════╗
+├→ Started: 2026-03-28 14:00:31
+├→ Log: /home/memento/PycharmProjects/Hummingbot/hummingbot/../custom_git_setup/logs/cron/sync_20260328_140031.log
+├═ [0;34mStep 1: Upstream Sync[0m
+[history] WARNING: .bash_history looks polluted (8400 lines vs master 2000)
+[history] Restoring from backup instead of merging
+2026-03-28 14:00:32: [1;33mStarting branch maintenance...[0m
+2026-03-28 14:00:32: [1;33mChecking out local development branch [development]...[0m
+warning: unable to rmdir 'sub-packages/candles-feed': Directory not empty
+Switched to branch 'development'
+Your branch is up to date with 'origin/development'.
+2026-03-28 14:00:32: [1;33mFetching upstream/development...[0m
+From https://github.com/hummingbot/hummingbot
+ * branch                development -> FETCH_HEAD
+2026-03-28 14:00:33: [1;33mRebasing local development onto upstream/development...[0m
+Current branch development is up to date.
+2026-03-28 14:00:33: [1;33mPushing updated development to origin...[0m
+Everything up-to-date
+2026-03-28 14:00:34: [0;32mLocal development is now up to date with upstream/development[0m
+2026-03-28 14:00:34: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+Already up to date.
+2026-03-28 14:00:34: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+Warning: passing language='c++' to cythonize() is deprecated. Instead, put "# distutils: language=c++" in your .pyx or .pxd file(s)
+/home/memento/.conda/envs/hummingbot/lib/python3.13/site-packages/setuptools/config/_apply_pyprojecttoml.py:82: SetuptoolsDeprecationWarning: `project.license` as a TOML table is deprecated
+!!
+
+        ********************************************************************************
+        Please use a simple string containing a SPDX expression for `project.license`. You can also use `project.license-files`. (Both options available on setuptools>=77.0.0).
+
+        This deprecation is overdue, please update your project and remove deprecated
+        calls to avoid build errors in the future.
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  corresp(dist, value, root_dir)
+running build_ext
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/connector_base.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/aevo_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/aevo_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/binance_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/binance_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/bybit_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/bybit_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/derive_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/derive_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/gate_io_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/gate_io_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/hyperliquid_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/hyperliquid_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/kucoin_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/kucoin_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/derivative/pacifica_perpetual/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/derivative/pacifica_perpetual
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/binance/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/binance
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/bitget/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/bitget
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/bitmart/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/bitmart
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/bitstamp/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/bitstamp
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/bybit/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/bybit
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/coinbase_advanced_trade/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/coinbase_advanced_trade
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/cube/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/cube
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/foxbit/foxbit_connector.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/foxbit
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/gate_io/placeholder.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/gate_io
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/kucoin/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/kucoin
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/mexc/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/mexc
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/paper_trade/paper_trade_exchange.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/paper_trade
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/vertex/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/vertex
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange/xrpl/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/exchange/xrpl
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/exchange_base.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/in_flight_order_base.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/test_support/mock_paper_exchange.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector/test_support
+copying build/lib.linux-x86_64-cpython-313/hummingbot/connector/trading_rule.cpython-313-x86_64-linux-gnu.so -> hummingbot/connector
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/clock.cpython-313-x86_64-linux-gnu.so -> hummingbot/core
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/composite_order_book.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/limit_order.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/order_book.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/order_book_query_result.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/order_expiration_entry.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/data_type/transaction_tracker.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/data_type
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/event/event_listener.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/event
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/event/event_logger.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/event
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/event/event_reporter.cpython-313-x86_64-linux-gnu.so -> hummingbot/core/event
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/network_iterator.cpython-313-x86_64-linux-gnu.so -> hummingbot/core
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/pubsub.cpython-313-x86_64-linux-gnu.so -> hummingbot/core
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/py_time_iterator.cpython-313-x86_64-linux-gnu.so -> hummingbot/core
+copying build/lib.linux-x86_64-cpython-313/hummingbot/core/time_iterator.cpython-313-x86_64-linux-gnu.so -> hummingbot/core
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/__utils__/ring_buffer.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/__utils__
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/__utils__/trailing_indicators/trading_intensity.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/__utils__/trailing_indicators
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/amm_arb/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/amm_arb
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/api_asset_price_delegate.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/asset_price_delegate.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/avellaneda_market_making/avellaneda_market_making.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/avellaneda_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/cross_exchange_market_making/order_id_market_pair_tracker.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/cross_exchange_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/cross_exchange_mining/cross_exchange_mining.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/cross_exchange_mining
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/cross_exchange_mining/order_id_market_pair_tracker.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/cross_exchange_mining
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/liquidity_mining/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/liquidity_mining
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/order_book_asset_price_delegate.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/order_tracker.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/perpetual_market_making/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/perpetual_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/pure_market_making/inventory_skew_calculator.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/pure_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/pure_market_making/pure_market_making.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/pure_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/pure_market_making/pure_market_making_order_tracker.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/pure_market_making
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/spot_perpetual_arbitrage/dummy.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy/spot_perpetual_arbitrage
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/strategy_base.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+copying build/lib.linux-x86_64-cpython-313/hummingbot/strategy/strategy_py_base.cpython-313-x86_64-linux-gnu.so -> hummingbot/strategy
+log_message "${GREEN}Branch maintenance completed successfullyrestore_working_state{NC}"
+2026-03-28 14:00:40: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+  └→ [0;32m✓ Upstream sync completed[0m
+├═ [0;34mStep 2: Branch Tracking[0m
+
+╔══════════════════════════════[ [0;34mBranch Tracking[0m ]═══════════════════════════════╗
+├═ [0;34mProcessing target branch: bleeding-edge[0m
+  ├═ Processing _for_bleed/environment
+    ├  [0;34m[0;32mBranch found: local[0m[0m
+    ├  [0;34m[0;32mMergeable[0m[0m
+
+    └→ [0;31m✗ Merge failed[0m
+├→ Branch _for_bleed/environment processed
+├═ Processing _for_bleed/add-executor-lock-unlock-collateral
+  ├  [0;34m[0;32mBranch found: local[0m[0m
+  ├  [0;34m[0;32mMergeable[0m[0m
+
+  └→ [0;31m✗ Merge failed[0m
+  ├→ Branch _for_bleed/add-executor-lock-unlock-collateral processed
+  ├═ Processing _for_bleed/candles-public-api
+├  [0;34m[0;32mBranch found: local[0m[0m
+├  [0;34m[0;32mMergeable[0m[0m
+
+└→ [0;31m✗ Merge failed[0m
+    ├→ Branch _for_bleed/candles-public-api processed
+    ├═ Processing _for_bleed/progressive-executor-trading-v2
+  ├  [0;34m[0;32mBranch found: local[0m[0m
+  ├  [0;34m[0;32mMergeable[0m[0m
+
+  └→ [0;31m✗ Merge failed[0m
+      ├→ Branch _for_bleed/progressive-executor-trading-v2 processed
+      ├═ Processing _for_bleed/pixi-workspace
+    ├  [0;34m[0;32mBranch found: local[0m[0m
+    ├  [0;34m[0;32mMergeable[0m[0m
+
+    └→ [0;31m✗ Merge failed[0m
+        ├→ Branch _for_bleed/pixi-workspace processed
+        ├═ Processing _for_bleed_manual/kraken-tweaks
+      ├  [0;34m[0;32mBranch found: local[0m[0m
+      ├  [0;34m[0;32mMergeable[0m[0m
+
+      └→ [0;31m✗ Merge failed[0m
+          ├→ Branch _for_bleed_manual/kraken-tweaks processed
+            ├→ Branch tracking completed successfully!
+  └→ [0;32m✓ Branch tracking completed[0m
+├═ [0;34mStep 3: Interface Check[0m
+
+╔═══════════════════════[ [0;34mInterface Compatibility Check[0m ]════════════════════════╗
+├→ Activating conda hummingbot environment
+├═ [0;34mExecutorBase[0m
+  ├→ Import: OK
+  └→ [0;32m✓ ExecutorBase compatible[0m
+├═ [0;34mExecutorOrchestrator[0m
+  ├→ Import: OK
+  └→ [0;32m✓ ExecutorOrchestrator compatible[0m
+├═ [0;34mExecutor Data Types[0m
+  ├→ Import: OK
+  └→ [0;32m✓ Data types compatible[0m
+├═ [0;34mDirectionalTradingControllerBase[0m
+  ├→ Import: OK
+  └→ [0;32m✓ DirectionalTradingController compatible[0m
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+
+[0;32mCOMPATIBLE: All interface checks passed[0m
+  └→ [0;32m✓ Interface check passed[0m
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+
+Hummingbot Sync Summary
+========================
+Run:        20260328_140031
+Completed:  2026-03-28 14:01:12
+Overall:    CLEAN
+
+Steps:
+  Upstream Sync:     success
+  Branch Tracking:   success
+  Interface Check:   compatible
+
+Log: /home/memento/PycharmProjects/Hummingbot/hummingbot/../custom_git_setup/logs/cron/sync_20260328_140031.log

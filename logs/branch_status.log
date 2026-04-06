@@ -1,0 +1,291 @@
+Status Report - 2026-03-31 11:08:22
+=================================
+
+2026-03-31 11:08:27: Starting test verification between origin/development and bleeding-edge
+2026-03-31 11:08:27: DEBUG: Commit details for 326d5251be371824112eb77579e644dcdfdfb34a:
+2026-03-31 11:08:27: 
+2026-03-31 11:08:27: DEBUG: Files changed in commit 326d5251be371824112eb77579e644dcdfdfb34a:
+2026-03-31 11:08:27: 
+2026-03-31 11:08:27: DEBUG: Diff stats for 326d5251be371824112eb77579e644dcdfdfb34a:
+2026-03-31 11:08:27: 
+2026-03-31 11:08:27: [1;33mNo source files modified in commit 326d5251be371824112eb77579e644dcdfdfb34a[0m
+2026-03-31 11:08:32: Starting test verification between origin/development and bleeding-edge
+2026-03-31 11:08:32: DEBUG: Commit details for dc8e5c111dc3be6e17a9d49ac1fecb9a010916ef:
+2026-03-31 11:08:32: 
+2026-03-31 11:08:32: DEBUG: Files changed in commit dc8e5c111dc3be6e17a9d49ac1fecb9a010916ef:
+2026-03-31 11:08:32: 
+2026-03-31 11:08:32: DEBUG: Diff stats for dc8e5c111dc3be6e17a9d49ac1fecb9a010916ef:
+2026-03-31 11:08:32: 
+2026-03-31 11:08:32: [1;33mNo source files modified in commit dc8e5c111dc3be6e17a9d49ac1fecb9a010916ef[0m
+2026-03-31 12:00:02: [1;33mStarting branch maintenance...[0m
+2026-03-31 12:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-03-31 12:00:02: [1;33mFetching upstream/development...[0m
+2026-03-31 12:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-03-31 12:00:03: [1;33mPushing updated development to origin...[0m
+2026-03-31 12:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-03-31 12:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-03-31 12:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-03-31 12:00:06: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-03-31 18:00:02: [1;33mStarting branch maintenance...[0m
+2026-03-31 18:00:03: [1;33mStashing all changes (including untracked)...[0m
+2026-03-31 18:00:03: [1;33mChecking out local development branch [development]...[0m
+2026-03-31 18:00:03: [1;33mFetching upstream/development...[0m
+2026-03-31 18:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-03-31 18:00:04: [1;33mPushing updated development to origin...[0m
+2026-03-31 18:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-03-31 18:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-03-31 18:00:05: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-03-31 18:00:05: [1;33mRestoring your working changes...[0m
+2026-03-31 18:00:05: [0;31mFailed to restore stashed changes.[0m
+2026-03-31 18:00:05: [1;33mThey remain in stash: AUTO_SYNC_20260331_180003_bleeding-edge[0m
+2026-04-01 12:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-01 12:00:02: [1;33mFound untracked files:[0m
+2026-04-01 12:00:02: sub-packages/market-simulator/market_simulator/core/clock.py
+sub-packages/market-simulator/market_simulator/core/events.py
+sub-packages/market-simulator/market_simulator/core/types.py
+sub-packages/market-simulator/market_simulator/protocols/connector.py
+sub-packages/market-simulator/market_simulator/simulator/balance_manager.py
+sub-packages/market-simulator/market_simulator/simulator/exchange.py
+sub-packages/market-simulator/market_simulator/simulator/fee_model.py
+sub-packages/market-simulator/market_simulator/simulator/matching_engine.py
+sub-packages/market-simulator/market_simulator/simulator/order_book.py
+sub-packages/market-simulator/market_simulator/simulator/order_tracker.py
+sub-packages/market-simulator/tests/unit/test_balance_manager.py
+sub-packages/market-simulator/tests/unit/test_clock.py
+sub-packages/market-simulator/tests/unit/test_events.py
+sub-packages/market-simulator/tests/unit/test_exchange.py
+sub-packages/market-simulator/tests/unit/test_fee_model.py
+sub-packages/market-simulator/tests/unit/test_matching_engine.py
+sub-packages/market-simulator/tests/unit/test_order_book.py
+sub-packages/market-simulator/tests/unit/test_order_tracker.py
+sub-packages/market-simulator/tests/unit/test_types.py
+2026-04-01 12:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-01 12:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-01 12:00:03: [1;33mFetching upstream/development...[0m
+2026-04-01 12:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-01 12:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-01 12:00:05: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-01 12:00:05: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-01 12:00:05: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-01 12:00:05: [1;33mRestoring your working changes...[0m
+2026-04-01 12:00:07: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-01 18:00:01: [1;33mStarting branch maintenance...[0m
+2026-04-01 18:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-01 18:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-01 18:00:02: [1;33mFetching upstream/development...[0m
+2026-04-01 18:00:02: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-01 18:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-01 18:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-01 18:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-01 18:00:04: [1;33mFeature branch [bleeding-edge] doesn't exist. Creating...[0m
+2026-04-01 18:00:04: [0;31mFailed to create feature branch [bleeding-edge][0m
+2026-04-02 00:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-02 00:00:02: [1;33mFound untracked files:[0m
+2026-04-02 00:00:02: .mcp.json
+.serena/.gitignore
+.serena/project.yml
+sub-packages/candles-feed/
+sub-packages/liquidations-feed/
+sub-packages/rate-oracle/
+2026-04-02 00:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-02 00:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-02 00:00:02: [1;33mFetching upstream/development...[0m
+2026-04-02 00:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-02 00:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-02 00:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-02 00:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-02 00:00:04: [1;33mFeature branch [bleeding-edge] doesn't exist. Creating...[0m
+2026-04-02 00:00:04: [0;31mFailed to create feature branch [bleeding-edge][0m
+2026-04-02 06:00:01: [1;33mStarting branch maintenance...[0m
+2026-04-02 06:00:02: [1;33mFound untracked files:[0m
+2026-04-02 06:00:02: .serena/project.local.yml
+sub-packages/candles-feed/
+sub-packages/liquidations-feed/
+sub-packages/rate-oracle/
+2026-04-02 06:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-02 06:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-02 06:00:02: [1;33mFetching upstream/development...[0m
+2026-04-02 06:00:02: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-02 06:00:02: [1;33mPushing updated development to origin...[0m
+2026-04-02 06:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-02 06:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-02 06:00:04: [1;33mFeature branch [bleeding-edge] doesn't exist. Creating...[0m
+2026-04-02 06:00:04: [0;31mFailed to create feature branch [bleeding-edge][0m
+2026-04-02 12:00:04: [1;33mStarting branch maintenance...[0m
+2026-04-02 12:00:05: [1;33mStashing all changes (including untracked)...[0m
+2026-04-02 12:00:05: [0;31mFailed to stash changes[0m
+2026-04-02 18:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-02 18:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-02 18:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-02 18:00:02: [1;33mFetching upstream/development...[0m
+2026-04-02 18:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-02 18:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-02 18:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-02 18:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-02 18:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-02 18:00:04: [1;33mRestoring your working changes...[0m
+2026-04-02 18:00:06: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-03 00:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-03 00:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-03 00:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-03 00:00:02: [1;33mFetching upstream/development...[0m
+2026-04-03 00:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-03 00:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-03 00:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-03 00:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-03 00:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-03 00:00:04: [1;33mRestoring your working changes...[0m
+2026-04-03 00:00:04: [0;31mFailed to restore stashed changes.[0m
+2026-04-03 00:00:04: [1;33mThey remain in stash: AUTO_SYNC_20260403_000002_bleeding-edge[0m
+2026-04-03 06:00:01: [1;33mStarting branch maintenance...[0m
+2026-04-03 06:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-03 06:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-03 06:00:02: [1;33mFetching upstream/development...[0m
+2026-04-03 06:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-03 06:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-03 06:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-03 06:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-03 06:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-03 06:00:04: [1;33mRestoring your working changes...[0m
+2026-04-03 06:00:04: [0;31mFailed to restore stashed changes.[0m
+2026-04-03 06:00:04: [1;33mThey remain in stash: AUTO_SYNC_20260403_060002_bleeding-edge[0m
+2026-04-03 12:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-03 12:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-03 12:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-03 12:00:02: [1;33mFetching upstream/development...[0m
+2026-04-03 12:00:04: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-03 12:00:04: [1;33mPushing updated development to origin...[0m
+2026-04-03 12:00:05: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-03 12:00:05: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-03 12:00:06: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-03 12:00:06: [1;33mRestoring your working changes...[0m
+2026-04-03 12:00:06: [0;31mFailed to restore stashed changes.[0m
+2026-04-03 12:00:06: [1;33mThey remain in stash: AUTO_SYNC_20260403_120002_bleeding-edge[0m
+2026-04-03 18:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-03 18:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-03 18:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-03 18:00:02: [1;33mFetching upstream/development...[0m
+2026-04-03 18:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-03 18:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-03 18:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-03 18:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-03 18:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-03 18:00:04: [1;33mRestoring your working changes...[0m
+2026-04-03 18:00:04: [0;31mFailed to restore stashed changes.[0m
+2026-04-03 18:00:04: [1;33mThey remain in stash: AUTO_SYNC_20260403_180002_bleeding-edge[0m
+2026-04-04 00:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-04 00:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-04 00:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-04 00:00:03: [1;33mFetching upstream/development...[0m
+2026-04-04 00:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-04 00:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-04 00:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-04 00:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-04 00:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-04 00:00:04: [1;33mRestoring your working changes...[0m
+2026-04-04 00:00:05: [0;31mFailed to restore stashed changes.[0m
+2026-04-04 00:00:05: [1;33mThey remain in stash: AUTO_SYNC_20260404_000002_bleeding-edge[0m
+2026-04-04 06:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-04 06:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-04 06:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-04 06:00:02: [1;33mFetching upstream/development...[0m
+2026-04-04 06:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-04 06:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-04 06:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-04 06:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-04 06:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-04 06:00:04: [1;33mRestoring your working changes...[0m
+2026-04-04 06:00:04: [0;31mFailed to restore stashed changes.[0m
+2026-04-04 06:00:04: [1;33mThey remain in stash: AUTO_SYNC_20260404_060002_bleeding-edge[0m
+2026-04-04 12:00:01: [1;33mStarting branch maintenance...[0m
+2026-04-04 12:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-04 12:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-04 12:00:02: [1;33mFetching upstream/development...[0m
+2026-04-04 12:00:02: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-04 12:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-04 12:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-04 12:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-04 12:00:05: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-04 12:00:05: [1;33mRestoring your working changes...[0m
+2026-04-04 12:00:05: [0;31mFailed to restore stashed changes.[0m
+2026-04-04 12:00:05: [1;33mThey remain in stash: AUTO_SYNC_20260404_120002_bleeding-edge[0m
+2026-04-04 18:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-04 18:00:02: [1;33mFound untracked files:[0m
+2026-04-04 18:00:02: .mcp.json
+.serena/.gitignore
+.serena/project.yml
+sub-packages/candles-feed/
+sub-packages/cython-framework/
+sub-packages/liquidations-feed/
+sub-packages/market-simulator/
+sub-packages/rate-oracle/
+2026-04-04 18:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-04 18:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-04 18:00:02: [1;33mFetching upstream/development...[0m
+2026-04-04 18:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-04 18:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-04 18:00:03: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-04 18:00:03: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-04 18:00:04: [0;31mMerge conflicts detected in [bleeding-edge].[0m
+2026-04-04 18:00:04: [1;33mPlease resolve conflicts manually.[0m
+2026-04-04 18:00:04: [1;33mRestoring your working changes...[0m
+2026-04-04 18:00:04: [0;31mFailed to switch back to _for_bleed/add-executor-factory[0m
+2026-04-04 18:00:04: [1;33mYour changes remain stashed with: AUTO_SYNC_20260404_180002__for_bleed/add-executor-factory[0m
+2026-04-05 00:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-05 00:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-05 00:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-05 00:00:02: [1;33mFetching upstream/development...[0m
+2026-04-05 00:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-05 00:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-05 00:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-05 00:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-05 00:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-05 00:00:04: [1;33mRestoring your working changes...[0m
+2026-04-05 00:00:06: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-05 06:00:01: [1;33mStarting branch maintenance...[0m
+2026-04-05 06:00:02: [1;33mStashing all changes (including untracked)...[0m
+2026-04-05 06:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-05 06:00:02: [1;33mFetching upstream/development...[0m
+2026-04-05 06:00:02: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-05 06:00:02: [1;33mPushing updated development to origin...[0m
+2026-04-05 06:00:03: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-05 06:00:03: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-05 06:00:03: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-05 06:00:03: [1;33mRestoring your working changes...[0m
+2026-04-05 06:00:05: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-05 12:00:05: [1;33mStarting branch maintenance...[0m
+2026-04-05 12:00:06: [1;33mStashing all changes (including untracked)...[0m
+2026-04-05 12:00:06: [0;31mFailed to stash changes[0m
+2026-04-05 18:00:04: [1;33mStarting branch maintenance...[0m
+2026-04-05 18:00:05: [1;33mFound untracked files:[0m
+2026-04-05 18:00:05: sub-packages/rust-accelerators/
+2026-04-05 18:00:05: [1;33mStashing all changes (including untracked)...[0m
+2026-04-05 18:00:05: [0;31mFailed to stash changes[0m
+2026-04-06 00:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-06 00:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-06 00:00:02: [1;33mFetching upstream/development...[0m
+2026-04-06 00:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-06 00:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-06 00:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-06 00:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-06 00:00:05: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-06 00:00:07: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-06 06:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-06 06:00:02: [1;33mChecking out local development branch [development]...[0m
+2026-04-06 06:00:03: [1;33mFetching upstream/development...[0m
+2026-04-06 06:00:03: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-06 06:00:03: [1;33mPushing updated development to origin...[0m
+2026-04-06 06:00:04: [0;32mLocal development is now up to date with upstream/development[0m
+2026-04-06 06:00:04: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-06 06:00:04: [0;32mNo new commits were introduced into [bleeding-edge].[0m
+2026-04-06 06:00:06: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
+2026-04-06 12:00:02: [1;33mStarting branch maintenance...[0m
+2026-04-06 12:00:03: [1;33mChecking out local development branch [development]...[0m
+2026-04-06 12:00:03: [1;33mFetching upstream/development...[0m
+2026-04-06 12:00:04: [1;33mRebasing local development onto upstream/development...[0m
+2026-04-06 12:00:05: [1;33mPushing updated development to origin...[0m
+2026-04-06 12:00:06: [0;31mFailed to push updated development to origin[0m
+2026-04-06 12:00:06: [1;33mSyncing feature branch [bleeding-edge] with [development]...[0m
+2026-04-06 12:00:06: [0;31mMerge conflicts detected in [bleeding-edge].[0m
+2026-04-06 12:00:06: [1;33mPlease resolve conflicts manually.[0m
+2026-04-06 12:00:14: [0;32mBranch maintenance completed successfullyrestore_working_state{NC}
