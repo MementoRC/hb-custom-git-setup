@@ -245,7 +245,7 @@ ensure_clean_state() {
 
 git_quiet() {
     local output
-    output=$(eval "git $@" 2>&1) || {
+    output=$(eval "git $*" 2>&1) || {
         local status=$?
         echo "$output" | grep -v "^hint:" >&2
         return $status
