@@ -2,19 +2,52 @@ name: Security Scanning
 
 on:
   push:
-    branches: [main, development]
+    branches: [ main, development ]
   pull_request:
-    branches: [main, development]
+    branches: [ main, development ]
+  schedule:
+    - cron: '0 2 * * 0'
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
 
 jobs:
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: actions
+          build-mode: none
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
+
   secrets-scan:
     name: Secrets Detection
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
     - name: Install detect-secrets
       run: pip install detect-secrets
     - name: Run secrets detection
@@ -25,17 +58,35 @@ jobs:
           exit 1
         fi
 
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [codeql, secrets-scan]
+    if: always()
+    steps:
+    - name: Security Status Summary
+      run: |
+        echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "| Scan Type | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| CodeQL | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Secrets | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ needs.codeql.result }}" == "failure" || "${{ needs.secrets-scan.result }}" == "failure" ]]; then
+          exit 1
+        fi
+
   security-status:
     name: Security Scanning
     runs-on: ubuntu-latest
-    needs: [secrets-scan]
+    needs: [codeql, secrets-scan, security-summary]
     if: always()
     steps:
       - name: Report Security Status
         run: |
-          if [[ "${{ needs.secrets-scan.result }}" == "success" ]]; then
+          if [[ "${{ needs.codeql.result }}" == "success" && "${{ needs.secrets-scan.result }}" == "success" ]]; then
             echo "All Security Scanning jobs passed"
+            exit 0
           else
-            echo "Security Scanning failed"
+            echo "Some Security Scanning jobs failed"
             exit 1
           fi
