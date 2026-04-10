@@ -92,6 +92,7 @@ Steps:
   Upstream Sync:     ${MAINTENANCE_STATUS}
   Branch Tracking:   ${TRACKING_STATUS}
   Interface Check:   ${INTERFACE_STATUS}
+  Doc Generation:    ${DOCS_STATUS}
 EOF
 
     if [ ${#ERRORS[@]} -gt 0 ]; then
@@ -239,6 +240,27 @@ if [ "$SKIP_INTERFACE" = false ]; then
     fi
 else
     log_step "Interface check: skipped (--skip-interface)"
+fi
+
+###############################################################################
+# Step 4: Documentation Generation
+###############################################################################
+DOCS_STATUS="skipped"
+
+if [ "$TRACKING_STATUS" = "success" ]; then
+    log_section "$(colorize "$BLUE" "Step 4: Documentation Generation")"
+
+    if cd "$REPO_PATH" && pixi run docs-generate >> "$CRON_LOG" 2>&1; then
+        DOCS_STATUS="success"
+        log_result true "Documentation generated"
+    else
+        DOCS_STATUS="failed"
+        ERRORS+=("Documentation generation failed (non-blocking)")
+        log_result false "Documentation generation failed (non-blocking)"
+        # Docs failure is non-blocking: don't change OVERALL_STATUS
+    fi
+else
+    log_step "Documentation generation: skipped (tracking did not succeed)"
 fi
 
 ###############################################################################
