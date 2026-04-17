@@ -1,10 +1,25 @@
 #!/bin/bash
 # Rebase _for_bleed/ branches onto development using diff-and-apply with file scoping.
 #
-# Usage: bash rebase-all-onto-development.sh [--dry-run] [--resume] [--branch <name>]
+# Usage: bash rebase-all-onto-development.sh [--dry-run] [--resume] [--branch <name>] [--skip-infrastructure]
+#
+# Tiered rebase architecture:
+#   Phase 0   — Infrastructure branches rebase directly onto development.
+#               These carry CI, tooling, and workspace changes that all feature
+#               branches should inherit.
+#   Phase 0.5 — A temporary merge base (_temp/infrastructure-base) is created
+#               from development + all infrastructure branches merged in. This
+#               represents "development with infrastructure already applied".
+#   Phase 1   — Flat feature branches rebase onto _temp/infrastructure-base so
+#               every feature automatically includes infrastructure changes.
+#   Phase 2   — Chained branches rebase onto their parent (already on infra base).
+#   Cleanup   — _temp/infrastructure-base is deleted after all rebases complete.
+#
+# --resume              Skips branches already rebased onto development.
+# --skip-infrastructure Skips Phase 0 and uses existing infrastructure branches
+#                       as-is (useful when only feature branches changed).
 #
 # Each branch has explicit file patterns to prevent cross-branch pollution.
-# --resume skips branches that already have commits on development.
 
 set -euo pipefail
 
@@ -12,12 +27,23 @@ REPO="/home/memento/PycharmProjects/Hummingbot/hummingbot"
 DRY_RUN=""
 RESUME=""
 SINGLE_BRANCH=""
+SKIP_INFRASTRUCTURE=""
+
+# Infrastructure branches: rebase onto development and form the merge base
+# that all feature branches rebase onto. Add new infra branches here.
+INFRASTRUCTURE_BRANCHES=(
+    "_for_bleed/ci-and-testing"
+    "_for_bleed/pixi-workspace"
+)
+
+TEMP_INFRA_BASE="_temp/infrastructure-base"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN="true"; shift ;;
         --resume) RESUME="true"; shift ;;
         --branch) SINGLE_BRANCH="$2"; shift 2 ;;
+        --skip-infrastructure) SKIP_INFRASTRUCTURE="true"; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -156,35 +182,104 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" --no-verify
     echo "  ✓ $(git log --oneline -1)"
 }
 
+# --- Create infrastructure merge base ---
+# Merges all infrastructure branches into a temp branch off development.
+# Feature branches rebase onto this so they automatically include infra changes.
+create_infrastructure_base() {
+    echo ""
+    echo "=== Phase 0.5: Creating infrastructure merge base ==="
+    echo "  Branch: $TEMP_INFRA_BASE"
+    echo "  Merging: ${INFRASTRUCTURE_BRANCHES[*]}"
+
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "  [DRY RUN] Would create $TEMP_INFRA_BASE from development + infra branches"
+        return 0
+    fi
+
+    # Delete any stale temp branch from a prior interrupted run
+    if git rev-parse --verify "$TEMP_INFRA_BASE" &>/dev/null; then
+        echo "  Removing stale $TEMP_INFRA_BASE from prior run"
+        git branch -D "$TEMP_INFRA_BASE" 2>/dev/null || true
+    fi
+
+    git checkout development 2>/dev/null
+    git checkout -b "$TEMP_INFRA_BASE"
+
+    for branch in "${INFRASTRUCTURE_BRANCHES[@]}"; do
+        if ! git rev-parse --verify "$branch" &>/dev/null; then
+            echo "  WARNING: infrastructure branch $branch not found — skipping merge"
+            continue
+        fi
+        echo "  Merging $branch into $TEMP_INFRA_BASE..."
+        git merge --no-edit -m "Merge $branch into infrastructure base" "$branch" 2>/dev/null || {
+            echo "ERROR: Merge of $branch into $TEMP_INFRA_BASE failed. Resolve conflicts, then re-run."
+            exit 1
+        }
+        echo "  ✓ $branch merged"
+    done
+
+    echo "  ✓ Infrastructure base ready: $TEMP_INFRA_BASE"
+}
+
+# --- Clean up temp infrastructure base ---
+cleanup_infrastructure_base() {
+    if [ "$DRY_RUN" = "true" ]; then
+        return 0
+    fi
+    if git rev-parse --verify "$TEMP_INFRA_BASE" &>/dev/null; then
+        git checkout development 2>/dev/null || true
+        git branch -D "$TEMP_INFRA_BASE" 2>/dev/null || true
+        echo "  Cleaned up $TEMP_INFRA_BASE"
+    fi
+}
+
 # =====================================================================
 # Branch definitions with explicit file scopes
 # =====================================================================
 
 process_all() {
 
-echo "=== Phase 1: Flat branches ==="
+# =====================================================================
+echo "=== Phase 0: Infrastructure branches (rebase onto development) ==="
 
-rebase_branch "_for_bleed/ci-and-testing" "development" \
-    "ci: consolidated CI+testing — pixi workflow, asyncio_mode, pytest-timeout, passwd-hash fix" \
-    .pre-commit-config.yaml pyproject.toml test/
+if [ "$SKIP_INFRASTRUCTURE" = "true" ]; then
+    echo "  --skip-infrastructure: skipping Phase 0 rebase, using existing branches"
+else
 
-rebase_branch "_for_bleed/environment" "development" \
+    rebase_branch "_for_bleed/ci-and-testing" "development" \
+        "ci: consolidated CI+testing — pixi workflow, asyncio_mode, pytest-timeout, passwd-hash fix" \
+        .pre-commit-config.yaml pyproject.toml test/
+
+    rebase_branch "_for_bleed/pixi-workspace" "development" \
+        "feat: pixi workspace migration and sub-package submodules" \
+        pixi.toml .gitmodules sub-packages/ .gitignore .github/workflows/
+
+fi
+
+# =====================================================================
+create_infrastructure_base
+
+# =====================================================================
+echo ""
+echo "=== Phase 1: Flat feature branches (rebase onto infrastructure base) ==="
+
+rebase_branch "_for_bleed/environment" "$TEMP_INFRA_BASE" \
     "fix: environment and dependency fixes (injective-py, pip_packages)" \
     setup/environment.yml hummingbot/client/config/config_helpers.py \
     hummingbot/connector/client_order_tracker.py
 
-rebase_branch "_for_bleed/candles-public-api" "development" \
+rebase_branch "_for_bleed/candles-public-api" "$TEMP_INFRA_BASE" \
     "feat: public API for CandlesBase + hb-candles-feed integration" \
     hummingbot/data_feed/candles_feed/candles_base.py \
     hummingbot/data_feed/market_data_provider.py \
     hummingbot/connector/exchange/coinbase_advanced_trade/
 
-rebase_branch "_for_bleed/add-executor-lock-unlock-collateral" "development" \
+rebase_branch "_for_bleed/add-executor-lock-unlock-collateral" "$TEMP_INFRA_BASE" \
     "feat: lock/unlock collateral for executor" \
     hummingbot/strategy_v2/executors/executor_base.py \
     hummingbot/strategy_v2/executors/data_types.py
 
-rebase_branch "_for_bleed/progressive-executor-trading-v2" "development" \
+rebase_branch "_for_bleed/progressive-executor-trading-v2" "$TEMP_INFRA_BASE" \
     "feat: ProgressiveExecutor v2 with control/order/PnL mixins" \
     hummingbot/strategy_v2/executors/progressive_executor/ \
     hummingbot/strategy_v2/controllers/progressive_trading_controller.py \
@@ -192,13 +287,13 @@ rebase_branch "_for_bleed/progressive-executor-trading-v2" "development" \
     test/hummingbot/strategy_v2/executors/progressive_executor/ \
     test/hummingbot/strategy_v2/controllers/test_progressive_trading_controller_base.py
 
-rebase_branch "_for_bleed/add-update-executor-action" "development" \
+rebase_branch "_for_bleed/add-update-executor-action" "$TEMP_INFRA_BASE" \
     "feat: UpdateExecutorAction framework + volatility dispatch" \
     hummingbot/strategy_v2/executors/data_types.py \
     hummingbot/strategy_v2/executors/executor_orchestrator.py \
     test/hummingbot/strategy_v2/executors/test_executor_orchestrator.py
 
-rebase_branch "_for_bleed/executor-mixins" "development" \
+rebase_branch "_for_bleed/executor-mixins" "$TEMP_INFRA_BASE" \
     "feat: 7 shared executor mixins (Retry, Balance, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNL)" \
     hummingbot/strategy_v2/executors/mixins/ \
     hummingbot/strategy_v2/executors/executor_protocols.py \
@@ -208,17 +303,13 @@ rebase_branch "_for_bleed/executor-mixins" "development" \
     test/hummingbot/strategy_v2/executors/executor_integration_test_base.py \
     test/hummingbot/strategy_v2/utils/test_trailing_stop_controller.py
 
-rebase_branch "_for_bleed/pixi-workspace" "development" \
-    "feat: pixi workspace migration and sub-package submodules" \
-    pixi.toml .gitmodules sub-packages/ .gitignore .github/workflows/
-
-rebase_branch "_for_bleed/strategy-framework" "development" \
+rebase_branch "_for_bleed/strategy-framework" "$TEMP_INFRA_BASE" \
     "feat: OrchestratorBridge delegating to strategy_framework.hb_compat" \
     hummingbot/strategy_v2/hb_compat/ \
     hummingbot/strategy/strategy_v2_base.py \
     test/hummingbot/strategy_v2/hb_compat/
 
-rebase_branch "_for_bleed/rust-integration" "development" \
+rebase_branch "_for_bleed/rust-integration" "$TEMP_INFRA_BASE" \
     "feat: Rust extension crate with Python fallback wrappers" \
     hummingbot/rust/ hummingbot/core/rust_metrics.py \
     hummingbot/core/data_type/order_expiration_entry_rust.py \
@@ -226,23 +317,24 @@ rebase_branch "_for_bleed/rust-integration" "development" \
     test/hummingbot/core/data_type/test_order_expiration_entry_rust.py \
     Cargo.toml pyproject.toml
 
-rebase_branch "_for_bleed/augmented-pure-python" "development" \
+rebase_branch "_for_bleed/augmented-pure-python" "$TEMP_INFRA_BASE" \
     "feat: Cython-to-Augmented-Pure-Python framework, docs, .gitignore" \
     docs/development/augmented-pure-python.md .gitignore
 
-rebase_branch "_for_bleed_manual/kraken-tweaks" "development" \
+rebase_branch "_for_bleed_manual/kraken-tweaks" "$TEMP_INFRA_BASE" \
     "fix: Kraken order status handling and startup cleanup" \
     hummingbot/connector/exchange/kraken/
 
-rebase_branch "_for_bleed/add-new-order-types" "development" \
+rebase_branch "_for_bleed/add-new-order-types" "$TEMP_INFRA_BASE" \
     "feat: conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP)" \
     hummingbot/core/data_type/common.py \
     hummingbot/core/data_type/order_candidate.py \
     hummingbot/core/data_type/delayed_market_order.py \
     test/hummingbot/core/data_type/
 
+# =====================================================================
 echo ""
-echo "=== Phase 2: Chained branches ==="
+echo "=== Phase 2: Chained branches (rebase onto their parent) ==="
 
 rebase_branch "_for_bleed/kraken-new-order-types" "_for_bleed/add-new-order-types" \
     "feat: Kraken connector conditional order routing" \
@@ -260,6 +352,11 @@ rebase_branch "_for_bleed/add-executor-factory" "_for_bleed/executor-mixins" \
     hummingbot/strategy_v2/executors/executor_orchestrator.py \
     test/hummingbot/strategy_v2/executors/test_executor_factory.py \
     test/hummingbot/strategy_v2/executors/test_executor_orchestrator.py
+
+# =====================================================================
+echo ""
+echo "=== Cleanup: Removing temporary infrastructure base ==="
+cleanup_infrastructure_base
 
 }
 
@@ -284,11 +381,12 @@ else
     echo "Rebased branches:"
     for branch in \
         _for_bleed/ci-and-testing \
+        _for_bleed/pixi-workspace \
         _for_bleed/environment _for_bleed/candles-public-api \
         _for_bleed/add-executor-lock-unlock-collateral \
         _for_bleed/progressive-executor-trading-v2 \
         _for_bleed/add-update-executor-action _for_bleed/executor-mixins \
-        _for_bleed/pixi-workspace _for_bleed/strategy-framework \
+        _for_bleed/strategy-framework \
         _for_bleed/rust-integration _for_bleed/augmented-pure-python \
         _for_bleed_manual/kraken-tweaks _for_bleed/add-new-order-types \
         _for_bleed/kraken-new-order-types _for_bleed/position-exchange-executor \
