@@ -182,6 +182,56 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" --no-verify
     echo "  ✓ $(git log --oneline -1)"
 }
 
+# --- Full rebase for infrastructure branches ---
+# Infrastructure branches (CI, tooling, workspace) touch many files across the
+# codebase. Scoped diff-and-apply is LOSSY for these branches because:
+#   1. First run: scoped diff from original → narrowed branch (discards out-of-scope files)
+#   2. Second run: scoped diff from narrowed branch → empty (nothing left to copy)
+# A plain `git rebase development` preserves ALL commits and is idempotent.
+rebase_infra_branch() {
+    local branch="$1"
+
+    echo ""
+    echo "=========================================="
+    echo "  $branch (infrastructure full rebase)"
+    echo "=========================================="
+
+    if ! git rev-parse --verify "$branch" &>/dev/null; then
+        echo "  SKIP: branch $branch not found"
+        return 0
+    fi
+
+    # Resume check: already rebased onto development?
+    if [ "$RESUME" = "true" ]; then
+        local merge_base
+        merge_base=$(git merge-base development "$branch" 2>/dev/null || echo "none")
+        local dev_head
+        dev_head=$(git rev-parse development 2>/dev/null)
+        local existing_commits
+        existing_commits=$(git rev-list "development..$branch" --count 2>/dev/null || echo "0")
+        if [ "$existing_commits" != "0" ] && [ "$merge_base" = "$dev_head" ]; then
+            echo "  SKIP (already rebased, $existing_commits commits on development)"
+            return 0
+        fi
+    fi
+
+    if [ "$DRY_RUN" = "true" ]; then
+        local commit_count
+        commit_count=$(git rev-list "development...$branch" --count 2>/dev/null || echo "?")
+        echo "  [DRY RUN] Would rebase $branch onto development ($commit_count commits)"
+        return 0
+    fi
+
+    git checkout "$branch" 2>/dev/null
+    git rebase development 2>/dev/null || {
+        echo "ERROR: Rebase of $branch onto development failed. Resolve conflicts, then re-run with --resume."
+        git rebase --abort 2>/dev/null || true
+        exit 1
+    }
+
+    echo "  ✓ $(git log --oneline -1)"
+}
+
 # --- Create infrastructure merge base ---
 # Merges all infrastructure branches into a temp branch off development.
 # Feature branches rebase onto this so they automatically include infra changes.
@@ -246,13 +296,11 @@ if [ "$SKIP_INFRASTRUCTURE" = "true" ]; then
     echo "  --skip-infrastructure: skipping Phase 0 rebase, using existing branches"
 else
 
-    rebase_branch "_for_bleed/ci-and-testing" "development" \
-        "ci: consolidated CI+testing — pixi workflow, asyncio_mode, pytest-timeout, passwd-hash fix" \
-        .pre-commit-config.yaml pyproject.toml test/
-
-    rebase_branch "_for_bleed/pixi-workspace" "development" \
-        "feat: pixi workspace migration and sub-package submodules" \
-        pixi.toml .gitmodules sub-packages/ .gitignore .github/workflows/
+    # Infrastructure branches use full git rebase (NOT scoped diff-and-apply).
+    # Scoped rebase is lossy for infra branches: they touch many files across the
+    # codebase and a second run on the already-narrowed branch produces an empty diff.
+    rebase_infra_branch "_for_bleed/ci-and-testing"
+    rebase_infra_branch "_for_bleed/pixi-workspace"
 
 fi
 
