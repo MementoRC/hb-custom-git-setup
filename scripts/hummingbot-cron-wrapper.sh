@@ -4,14 +4,15 @@
 # --------------------------
 # Cron-safe entry point that orchestrates the full sync cycle:
 #   1. Upstream sync (hummingbot-maintenance.sh)
-#   2. Branch tracking merges (hummingbot-branch-tracking.sh)
-#   3. Interface compatibility check (hummingbot-interface-check.sh)
+#   2. Rebase _for_bleed/ branches onto development (rebase-all-onto-development.sh)
+#   3. Branch tracking merges (hummingbot-branch-tracking.sh)
+#   4. Interface compatibility check (hummingbot-interface-check.sh)
 #
 # All output is captured to timestamped logs in logs/cron/.
 # Exit codes: 0=clean, 1=error, 2=conflicts need attention
 #
 # Usage:
-#   ./hummingbot-cron-wrapper.sh [--notify] [--skip-maintenance] [--skip-tracking] [--skip-interface]
+#   ./hummingbot-cron-wrapper.sh [--notify] [--skip-maintenance] [--skip-rebase] [--skip-tracking] [--skip-interface]
 #
 # Cron example:
 #   0 3 * * 0 /path/to/hummingbot-cron-wrapper.sh --notify
@@ -31,6 +32,7 @@ SUMMARY_FILE="${CRON_LOG_DIR}/latest_summary.txt"
 # Flags
 DO_NOTIFY=false
 SKIP_MAINTENANCE=false
+SKIP_REBASE=false
 SKIP_TRACKING=false
 SKIP_INTERFACE=false
 
@@ -41,10 +43,11 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --notify)       DO_NOTIFY=true; shift ;;
         --skip-maintenance) SKIP_MAINTENANCE=true; shift ;;
+        --skip-rebase)      SKIP_REBASE=true; shift ;;
         --skip-tracking)    SKIP_TRACKING=true; shift ;;
         --skip-interface)   SKIP_INTERFACE=true; shift ;;
         --help)
-            echo "Usage: $0 [--notify] [--skip-maintenance] [--skip-tracking] [--skip-interface]"
+            echo "Usage: $0 [--notify] [--skip-maintenance] [--skip-rebase] [--skip-tracking] [--skip-interface]"
             exit 0
             ;;
         *)
@@ -73,6 +76,7 @@ fi
 ###############################################################################
 OVERALL_STATUS=0
 MAINTENANCE_STATUS="skipped"
+REBASE_STATUS="skipped"
 TRACKING_STATUS="skipped"
 INTERFACE_STATUS="skipped"
 ERRORS=()
@@ -90,6 +94,7 @@ Overall:    $([ $OVERALL_STATUS -eq 0 ] && echo "CLEAN" || ([ $OVERALL_STATUS -e
 
 Steps:
   Upstream Sync:     ${MAINTENANCE_STATUS}
+  Rebase Branches:   ${REBASE_STATUS}
   Branch Tracking:   ${TRACKING_STATUS}
   Interface Check:   ${INTERFACE_STATUS}
   Doc Generation:    ${DOCS_STATUS}
@@ -182,10 +187,37 @@ else
 fi
 
 ###############################################################################
-# Step 2: Branch Tracking
+# Step 2: Rebase _for_bleed/ Branches onto Development (Method A)
+###############################################################################
+if [ "$SKIP_REBASE" = false ]; then
+    log_section "$(colorize "$BLUE" "Step 2: Rebase Branches onto Development")"
+
+    if [ -x "$SCRIPT_DIR/rebase-all-onto-development.sh" ]; then
+        if "$SCRIPT_DIR/rebase-all-onto-development.sh"; then
+            REBASE_STATUS="success"
+            log_result true "Rebase completed"
+        else
+            REBASE_STATUS="failed"
+            ERRORS+=("Rebase failed - branch tracking will proceed with pre-rebase state")
+            log_result false "Rebase failed (non-fatal: branch tracking will still run)"
+            # Rebase failure is non-fatal: Method C (merge rebuild) can still succeed
+            [ $OVERALL_STATUS -eq 0 ] && OVERALL_STATUS=1
+        fi
+    else
+        REBASE_STATUS="not found"
+        ERRORS+=("rebase-all-onto-development.sh not found or not executable")
+        log_error "Rebase script not available"
+        indent_pop
+    fi
+else
+    log_step "Rebase branches: skipped (--skip-rebase)"
+fi
+
+###############################################################################
+# Step 3: Branch Tracking
 ###############################################################################
 if [ "$SKIP_TRACKING" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 2: Branch Tracking")"
+    log_section "$(colorize "$BLUE" "Step 3: Branch Tracking")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-branch-tracking.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-branch-tracking.sh"; then
@@ -209,10 +241,10 @@ else
 fi
 
 ###############################################################################
-# Step 3: Interface Compatibility Check
+# Step 4: Interface Compatibility Check
 ###############################################################################
 if [ "$SKIP_INTERFACE" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 3: Interface Check")"
+    log_section "$(colorize "$BLUE" "Step 4: Interface Check")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-interface-check.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-interface-check.sh"; then
@@ -243,12 +275,12 @@ else
 fi
 
 ###############################################################################
-# Step 4: Documentation Generation
+# Step 5: Documentation Generation
 ###############################################################################
 DOCS_STATUS="skipped"
 
 if [ "$TRACKING_STATUS" = "success" ]; then
-    log_section "$(colorize "$BLUE" "Step 4: Documentation Generation")"
+    log_section "$(colorize "$BLUE" "Step 5: Documentation Generation")"
 
     if cd "$REPO_PATH" && pixi run docs-generate >> "$CRON_LOG" 2>&1; then
         DOCS_STATUS="success"
