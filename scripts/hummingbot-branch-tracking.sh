@@ -197,6 +197,13 @@ run_tests() {
     local target_branch="$1"
     local source_branch="$2"
 
+    # Skip test verification during rebuild — the branch was just recreated
+    # from development, so the test verifier can't resolve refs properly.
+    # Tests should be run after the full rebuild completes.
+    if [ "$REBUILD_MODE" = "true" ]; then
+        return 0
+    fi
+
     log_section "$(colorize "$BLUE" "Running tests")"
 
     local test_script="${SCRIPT_DIR}/hummingbot-select-test-verifier.sh"
