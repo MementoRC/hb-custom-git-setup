@@ -262,6 +262,10 @@ create_infrastructure_base
 # =====================================================================
 echo ""
 echo "=== Phase 1: Flat feature branches (rebase onto infrastructure base) ==="
+# WARNING: Each file should appear in at most ONE branch scope.
+# The scoped diff-and-apply uses wholesale file replacement (git show),
+# so if two branches scope the same file, the later one silently clobbers
+# the earlier one's changes.
 
 rebase_branch "_for_bleed/environment" "$TEMP_INFRA_BASE" \
     "fix: environment and dependency fixes (injective-py, pip_packages)" \
@@ -289,6 +293,8 @@ rebase_branch "_for_bleed/progressive-executor-trading-v2" "$TEMP_INFRA_BASE" \
 
 rebase_branch "_for_bleed/add-update-executor-action" "$TEMP_INFRA_BASE" \
     "feat: UpdateExecutorAction framework + volatility dispatch" \
+    hummingbot/strategy_v2/models/executor_actions.py \
+    hummingbot/strategy_v2/executors/executor_base.py \
     hummingbot/strategy_v2/executors/data_types.py \
     hummingbot/strategy_v2/executors/executor_orchestrator.py \
     test/hummingbot/strategy_v2/executors/test_executor_orchestrator.py
@@ -315,7 +321,7 @@ rebase_branch "_for_bleed/rust-integration" "$TEMP_INFRA_BASE" \
     hummingbot/core/data_type/order_expiration_entry_rust.py \
     test/hummingbot/core/test_rust_metrics.py \
     test/hummingbot/core/data_type/test_order_expiration_entry_rust.py \
-    Cargo.toml pyproject.toml
+    Cargo.toml
 
 rebase_branch "_for_bleed/augmented-pure-python" "$TEMP_INFRA_BASE" \
     "feat: Cython-to-Augmented-Pure-Python framework, docs, .gitignore" \
