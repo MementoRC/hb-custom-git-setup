@@ -29,11 +29,11 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 ###############################################################################
 handle_new_files() {
     local untracked
-    # Exclude sub-packages/ (submodules managed by own branch) and tool configs (.serena/, .mcp.json)
-    untracked=$(git ls-files --others --exclude-standard | grep -Ev '^(sub-packages/|\.serena/|\.mcp\.json)')
+    # Exclude sub-packages/ (submodules managed by own branch), tool configs (.serena/, .mcp.json), and worktrees
+    untracked=$(git ls-files --others --exclude-standard | grep -Ev '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)')
     if [ -n "$untracked" ]; then
         log_operation "Adding new files..."
-        git ls-files --others --exclude-standard -z | grep -zEv '^(sub-packages/|\.serena/|\.mcp\.json)' | xargs -0 -r git add
+        git ls-files --others --exclude-standard -z | grep -zEv '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)' | xargs -0 -r git add
         # Skip hooks — these are auto-added files from merges, not user code
         git -c commit.gpgsign=false commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
     fi
@@ -329,9 +329,76 @@ sync_branch() {
         return 0
     else
         git_quiet merge --abort
-        log_result false "Merge failed"
-        indent_pop
-        return 1
+
+        # Attempt worktree-based rebase onto current bleeding-edge HEAD
+        if [ "$REBUILD_MODE" = "true" ]; then
+            log_operation "Merge conflict — attempting worktree rebase"
+            local wt_dir="${REPO_PATH}/.worktrees/rebase-$(basename "$branch")"
+            local current_head
+            current_head=$(git rev-parse HEAD)
+
+            # Clean up any stale worktree
+            rm -rf "$wt_dir" 2>/dev/null
+            git worktree prune 2>/dev/null
+
+            # Create worktree on the conflicting branch
+            if git worktree add "$wt_dir" "$ref" >& /dev/null; then
+                # Attempt automatic rebase onto current bleeding-edge HEAD
+                if (cd "$wt_dir" && GIT_EDITOR=true git rebase "$current_head" >& /dev/null); then
+                    # Rebase succeeded — update branch ref and retry merge
+                    local new_tip
+                    new_tip=$(cd "$wt_dir" && git rev-parse HEAD)
+                    git worktree remove "$wt_dir" >& /dev/null 2>&1
+                    git worktree prune 2>/dev/null
+
+                    # Update the branch to point at the rebased tip
+                    git branch -f "$branch" "$new_tip" >& /dev/null 2>&1
+
+                    # Retry the merge
+                    if git merge --no-ff "$branch" -m "Auto-merge $branch into $target (rebased)" >& /dev/null; then
+                        log_operation "Handle new files"
+                        handle_new_files || {
+                            log_error "Failed"
+                            indent_pop
+                            return 1
+                        }
+                        run_tests "$target" "$branch" || {
+                            log_error "Tests failed - reverting"
+                            git_quiet reset --hard HEAD^
+                            indent_pop
+                            return 1
+                        }
+                        log_result true "Done (after rebase)"
+                        indent_pop
+                        return 0
+                    else
+                        git_quiet merge --abort
+                        log_result false "Merge failed even after rebase"
+                        indent_pop
+                        return 1
+                    fi
+                else
+                    # Auto-rebase failed — leave worktree for manual resolution
+                    # Don't abort the rebase — leave it paused so user can resolve
+                    log_warning "Worktree left for manual resolution: $wt_dir"
+                    log_detail "  cd $wt_dir"
+                    log_detail "  # resolve conflicts, git add, git rebase --continue"
+                    log_detail "  # then: git -C $REPO_PATH branch -f $branch \$(git -C $wt_dir rev-parse HEAD)"
+                    log_detail "  # finally: git -C $REPO_PATH worktree remove $wt_dir"
+                    log_result false "Merge failed — worktree ready for manual rebase"
+                    indent_pop
+                    return 1
+                fi
+            else
+                log_result false "Merge failed (worktree creation failed)"
+                indent_pop
+                return 1
+            fi
+        else
+            log_result false "Merge failed"
+            indent_pop
+            return 1
+        fi
     fi
 }
 
@@ -349,6 +416,115 @@ get_tracked_branches() {
     local result
     result="$(yq -r ".target_branches[\"$target\"].tracked_branches[].name" "$BRANCH_CONFIG" 2>/dev/null)"
     echo "$result"
+}
+
+get_branch_parent() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").parent" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo ""
+    else
+        echo "$result"
+    fi
+}
+
+get_branch_tier() {
+    local target="$1"
+    local branch="$2"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].tracked_branches[] | select(.name == \"$branch\").tier" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo "feature"
+    else
+        echo "$result"
+    fi
+}
+
+# Emits branches in topological order partitioned by tier.
+# infrastructure branches are emitted first (in parent→child order),
+# then feature branches (in parent→child order).
+# Within each tier, flat branches (no parent) come before chained branches.
+# A log banner is printed before each tier to mark the transition.
+get_tracked_branches_sorted() {
+    local target="$1"
+    local -a infra_flat=() infra_chain_name=() infra_chain_parent=()
+    local -a feat_flat=()  feat_chain_name=()  feat_chain_parent=()
+
+    while IFS= read -r branch; do
+        [ -z "$branch" ] && continue
+        local parent tier
+        parent="$(get_branch_parent "$target" "$branch")"
+        tier="$(get_branch_tier "$target" "$branch")"
+        if [ "$tier" = "infrastructure" ]; then
+            if [ -z "$parent" ]; then
+                infra_flat+=("$branch")
+            else
+                infra_chain_name+=("$branch")
+                infra_chain_parent+=("$parent")
+            fi
+        else
+            if [ -z "$parent" ]; then
+                feat_flat+=("$branch")
+            else
+                feat_chain_name+=("$branch")
+                feat_chain_parent+=("$parent")
+            fi
+        fi
+    done < <(get_tracked_branches "$target")
+
+    # Helper: emit one tier's flat+chained branches in dependency order
+    # Usage: _emit_tier_branches flat_arr chain_name_arr chain_parent_arr emitted_arr_name
+    _emit_tier_branches() {
+        local -n _flat="$1"
+        local -n _chain_name="$2"
+        local -n _chain_parent="$3"
+        local -n _emitted="$4"
+
+        for b in "${_flat[@]}"; do
+            echo "$b"
+            _emitted+=("$b")
+        done
+
+        local -a pending_idx=()
+        for i in "${!_chain_name[@]}"; do pending_idx+=("$i"); done
+
+        local progress=true
+        while [ ${#pending_idx[@]} -gt 0 ] && [ "$progress" = "true" ]; do
+            progress=false
+            local -a next_pending=()
+            for i in "${pending_idx[@]}"; do
+                local parent_found=false
+                for e in "${_emitted[@]}"; do
+                    if [ "$e" = "${_chain_parent[$i]}" ]; then parent_found=true; break; fi
+                done
+                if [ "$parent_found" = "true" ]; then
+                    echo "${_chain_name[$i]}"
+                    _emitted+=("${_chain_name[$i]}")
+                    progress=true
+                else
+                    next_pending+=("$i")
+                fi
+            done
+            pending_idx=("${next_pending[@]}")
+        done
+
+        for i in "${pending_idx[@]}"; do
+            echo -e "$(get_indent)${BRANCH_CHAR}  $(colorize "$BLUE" "WARNING: branch ${_chain_name[$i]} has unresolved parent ${_chain_parent[$i]} — merging anyway")" >&2
+            echo "${_chain_name[$i]}"
+        done
+    }
+
+    local -a emitted=()
+
+    # Banners go to stderr so they appear in the log without polluting the
+    # stdout branch-name stream that callers consume via process substitution.
+    echo -e "$(get_indent)${BRANCH_CHAR}  $(colorize "$BLUE" "=== Merging infrastructure branches ===")" >&2
+    _emit_tier_branches infra_flat infra_chain_name infra_chain_parent emitted
+
+    echo -e "$(get_indent)${BRANCH_CHAR}  $(colorize "$BLUE" "=== Merging feature branches ===")" >&2
+    _emit_tier_branches feat_flat feat_chain_name feat_chain_parent emitted
 }
 
 is_branch_enabled() {
@@ -458,7 +634,7 @@ main() {
               sync_branch "$target_branch" "$branch"
               log_step "Branch $branch processed"
           fi
-      done < <(get_tracked_branches "$target_branch")
+      done < <(get_tracked_branches_sorted "$target_branch")
       indent_pop
 
   done < <(get_target_branches)

@@ -9,61 +9,35 @@
 #   disable_when_in_development: Auto-skip if branch is already merged into development
 #   feature_only:               Only merge feature content (no test/doc changes)
 #   interface_monitor:          Run interface compatibility checks after merging
+#   parent:                     Parent branch for chained branches (default: development)
+#                               Chained branches are merged AFTER their parent in topological order.
+#   tier:                       Merge tier — controls ordering within a rebuild cycle:
+#                                 infrastructure  Whole-project migrations (ruff format, pixi, pytest).
+#                                                 Merged FIRST; become the base that feature branches
+#                                                 build on. Any branch touching project-wide tooling
+#                                                 or CI belongs here.
+#                                 feature         Specific functionality additions that build on top
+#                                                 of the infrastructure layer. Merged AFTER all
+#                                                 infrastructure branches are applied.
 #
-# Last reviewed: 2026-03-25
+# Last reviewed: 2026-04-17
 
 target_branches:
   bleeding-edge:
     tracked_branches:
-      # --- CI / infrastructure (applied first, order matters) ---
+      # --- CI / infrastructure ---
 
-      - name: _for_bleed/pixi-ci-migration
+      - name: _for_bleed/ci-and-testing
         enabled: true
-        description: "CI conda→pixi migration: workflow.yml, .pre-commit-config.yaml (ruff), pytest-timeout, vertex ignore"
+        tier: infrastructure
+        description: "Consolidated CI+testing: pixi workflow, ruff format, coverage, pytest asyncio_mode, passwd-hash fix"
         permanent: true
         disable_when_in_development: false
 
       - name: _for_bleed/environment
         enabled: true
+        tier: feature
         description: "Environment and dependency fixes (injective-py, pip_packages)"
-        permanent: false
-        disable_when_in_development: true
-
-      # --- Feature branches (custom additions to bleeding-edge) ---
-
-      - name: feat/add-new-order-types
-        enabled: false  # CONFLICT: needs rebase onto current development
-        description: "Core support for new order types"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: feat/add-executor-factory
-        enabled: false  # CONFLICT: needs rebase onto current development
-        description: "Use a factory for orchestrator"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: feat/kraken-new-order-types
-        enabled: false  # CONFLICT: needs rebase onto current development
-        description: "Kraken new order types implementation"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: feat/position-exchange-executor
-        enabled: false  # DEPENDS on feat/add-new-order-types (STOP_LOSS OrderType)
-        description: "Position-based exchange executor"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: feat/coinbase_advanced_trade_candles
-        enabled: false  # CONFLICT: needs rebase onto current development
-        description: "Candles for Coinbase Advanced Trade"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: feat/conda-environment-upgrade
-        enabled: false  # SUPERSEDED by _for_bleed/pixi-ci-migration
-        description: "Conda environment and dependency upgrades"
         permanent: false
         disable_when_in_development: true
 
@@ -71,18 +45,21 @@ target_branches:
 
       - name: _for_bleed/add-executor-lock-unlock-collateral
         enabled: true
+        tier: feature
         description: "Lock/Unlock collateral for executor"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/candles-public-api
         enabled: true
+        tier: feature
         description: "Public API for CandlesBase + hb-candles-feed package integration with native fallback"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/progressive-executor-trading-v2
         enabled: true
+        tier: feature
         description: "ProgressiveExecutor feature v2 - depends on executor_base & controller interfaces"
         permanent: false
         disable_when_in_development: true
@@ -90,60 +67,91 @@ target_branches:
 
       - name: _for_bleed/add-update-executor-action
         enabled: true
+        tier: feature
         description: "UpdateExecutorAction framework + controller volatility dispatch for progressive executor"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/test-fixes
-        enabled: true
-        description: "Test fixes: okx timeout, xrpl traceback/timing (Py3.12), market_data_provider mock spec"
-        permanent: true
-        disable_when_in_development: false
+      # _for_bleed/test-fixes: CONSOLIDATED into ci-and-testing (2026-04-16)
 
       - name: _for_bleed/pixi-workspace
         enabled: true
+        tier: infrastructure
         description: "Pixi workspace migration and configuration"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/strategy-framework
+        enabled: true
+        tier: feature
+        description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter"
         permanent: false
         disable_when_in_development: true
 
       # _for_bleed/market-simulator: REMOVED (2026-04-05)
       # Replaced by hb-market-simulator submodule via _for_bleed/pixi-workspace
 
-      - name: _for_bleed/augmented-pure-python
+      - name: _for_bleed/rust-integration
         enabled: true
-        description: "Cython-to-Augmented-Pure-Python framework: skill, docs, .gitignore for skills"
+        tier: feature
+        description: "Rust extension crate: hummingbot/rust/, fallback wrappers (rust_metrics.py, order_expiration_entry_rust.py), and tests"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/add-executor-factory
+      - name: _for_bleed/augmented-pure-python
         enabled: true
-        description: "ExecutorFactory with decorator-based registration for all 8 executors"
+        tier: feature
+        description: "Cython-to-Augmented-Pure-Python framework: skill, docs, .gitignore for skills"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/executor-mixins
         enabled: true
+        tier: feature
         description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/add-executor-factory
+        enabled: true
+        tier: feature
+        description: "ExecutorFactory with decorator-based registration for all 8 executors"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/executor-mixins
+
       # _for_bleed/cython-framework-subpackage: REMOVED (2026-04-05)
       # Replaced by hb-cython-framework submodule via _for_bleed/pixi-workspace
 
-      - name: _for_bleed/patch-passwd-haskey-tests
+      # _for_bleed/patch-passwd-haskey-tests: CONSOLIDATED into ci-and-testing (2026-04-16)
+      # _for_bleed/convert-to-pytest: CONSOLIDATED into ci-and-testing (2026-04-16)
+
+      - name: _for_bleed/add-new-order-types
         enabled: true
-        description: "Remove failing password hash tests"
+        tier: feature
+        description: "Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/convert-to-pytest
+      - name: _for_bleed/kraken-new-order-types
         enabled: true
-        description: "pytest migration: asyncio_mode=auto + pixi tasks for AST-based unittest→pytest via refactor package"
+        tier: feature
+        description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop)"
         permanent: false
         disable_when_in_development: true
+        parent: _for_bleed/add-new-order-types
+
+      - name: _for_bleed/position-exchange-executor
+        enabled: true
+        tier: feature
+        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/add-new-order-types
 
       - name: _for_bleed_manual/kraken-tweaks
         enabled: true
+        tier: feature
         description: "Kraken order status handling and startup cleanup"
         permanent: false
         disable_when_in_development: false
