@@ -235,9 +235,9 @@ check_git_repo() {
 }
 
 ensure_clean_state() {
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    if ! git diff --quiet --ignore-submodules || ! git diff --cached --quiet --ignore-submodules; then
         log_error "Working directory is not clean. Please commit or stash your changes."
-        git status --short
+        git status --short --ignore-submodules
         return 1
     fi
     return 0
