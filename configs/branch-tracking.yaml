@@ -24,15 +24,31 @@
 
 target_branches:
   bleeding-edge:
+    # Base branch: formatted superset of development.
+    # Merged INTO bleeding-edge as the starting point (not a tracked branch).
+    # Synced with development + pixi run format before each rebuild.
+    base_branch: ci-base
+
     tracked_branches:
       # --- CI / infrastructure ---
 
-      - name: _for_bleed/ci-and-testing
+      # _for_bleed/ci-and-testing: PROMOTED to ci-base (2026-04-18)
+      # ci-base is the formatted base layer, not a merge ingredient.
+      # It is synced with development and used as bleeding-edge's starting point.
+
+      - name: _for_bleed/py312-runtime
         enabled: true
         tier: infrastructure
-        description: "Consolidated CI+testing: pixi workflow, ruff format, coverage, pytest asyncio_mode, passwd-hash fix"
+        description: "Python 3.12 runtime: stdlib shims, dependency pins, Cython directives — fixes pyupgrade/refactor cannot produce"
         permanent: true
         disable_when_in_development: false
+
+      - name: _for_bleed/test-coverage
+        enabled: true
+        tier: infrastructure
+        description: "Low-hanging-fruit test coverage for uncovered lines in diff vs development"
+        permanent: false
+        disable_when_in_development: true
 
       - name: _for_bleed/environment
         enabled: true
@@ -74,12 +90,8 @@ target_branches:
 
       # _for_bleed/test-fixes: CONSOLIDATED into ci-and-testing (2026-04-16)
 
-      - name: _for_bleed/pixi-workspace
-        enabled: true
-        tier: infrastructure
-        description: "Pixi workspace migration and configuration"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/pixi-workspace: PROMOTED to ci-base (2026-04-19)
+      # CI workflow, .gitmodules, .gitignore now owned by ci-base.
 
       - name: _for_bleed/strategy-framework
         enabled: true

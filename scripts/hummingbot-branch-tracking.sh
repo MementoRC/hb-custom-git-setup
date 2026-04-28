@@ -35,8 +35,234 @@ handle_new_files() {
         log_operation "Adding new files..."
         git ls-files --others --exclude-standard -z | grep -zEv '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)' | xargs -0 -r git add
         # Skip hooks — these are auto-added files from merges, not user code
-        git -c commit.gpgsign=false commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
+        git commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
     fi
+    return 0
+}
+
+###############################################################################
+# Base Branch Sync
+###############################################################################
+get_base_branch() {
+    local target="$1"
+    local result
+    result="$(yq -r ".target_branches[\"$target\"].base_branch" "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo ""
+    else
+        echo "$result"
+    fi
+}
+
+###############################################################################
+# Python 3.12 Transform Stage
+# ---------------------------
+# Idempotent AST transforms re-applied to every upstream sync. Composed of:
+#   1. pyupgrade --py312-plus  — stock syntax modernizations
+#   2. refactor-py312          — project-specific rules (asyncio, distutils, removed stdlib)
+# Followed by an idempotency assertion (second pass must produce zero diff)
+# and a parse-error gate (compileall must succeed).
+#
+# Toggleable via PY312_TRANSFORMS=0 to bypass during incident triage.
+###############################################################################
+run_py312_transforms() {
+    if [ "${PY312_TRANSFORMS:-1}" = "0" ]; then
+        log_operation "py312 transforms disabled via PY312_TRANSFORMS=0"
+        return 0
+    fi
+
+    local target_paths="hummingbot test controllers scripts"
+    local pyupgrade_cmd=""
+    local refactor_cmd=""
+
+    # Locate tools — prefer pixi env, fall back to PATH.
+    if [ -x "$REPO_PATH/.pixi/envs/default/bin/pyupgrade" ]; then
+        pyupgrade_cmd="$REPO_PATH/.pixi/envs/default/bin/pyupgrade"
+    elif command -v pyupgrade &> /dev/null; then
+        pyupgrade_cmd="pyupgrade"
+    fi
+
+    if [ -x "$REPO_PATH/.pixi/envs/default/bin/refactor-py312" ]; then
+        refactor_cmd="$REPO_PATH/.pixi/envs/default/bin/refactor-py312"
+    elif command -v refactor-py312 &> /dev/null; then
+        refactor_cmd="refactor-py312"
+    fi
+
+    if [ -z "$pyupgrade_cmd" ] && [ -z "$refactor_cmd" ]; then
+        log_warning "py312 transforms: neither pyupgrade nor refactor-py312 found — skipping"
+        return 0
+    fi
+
+    log_section "Running py312 transforms"
+
+    # Pass 1: pyupgrade (stock syntax)
+    if [ -n "$pyupgrade_cmd" ]; then
+        # shellcheck disable=SC2046
+        find $target_paths -name '*.py' -not -path '*/.pixi/*' -print0 2>/dev/null \
+            | xargs -0 -r "$pyupgrade_cmd" --py312-plus 2>/dev/null || true
+    fi
+
+    # Pass 2: refactor custom rules
+    # --workers 1 is REQUIRED: refactor's default ProcessPoolExecutor cannot
+    # pickle Rule classes that import `ast` (TypeError: cannot pickle module).
+    if [ -n "$refactor_cmd" ]; then
+        # shellcheck disable=SC2086
+        "$refactor_cmd" --workers 1 --apply $target_paths >& /dev/null || {
+            log_error "refactor-py312 failed"
+            return 1
+        }
+    fi
+
+    # Parse-error gate
+    if ! python -m compileall -q $target_paths >& /dev/null; then
+        log_error "py312 transforms produced syntax errors (compileall failed) — aborting"
+        return 1
+    fi
+
+    # Commit transform changes
+    if ! git diff --quiet; then
+        git add -A -- . ':!sub-packages'
+        git commit --no-verify -m "chore: py312 idempotent transforms (pyupgrade + refactor)" >& /dev/null \
+            || { log_error "Failed to commit py312 transforms"; return 1; }
+        log_operation "Committed py312 transform changes"
+    else
+        log_operation "py312 transforms: no changes needed"
+    fi
+
+    # Idempotency assertion: re-run must produce zero diff
+    if [ -n "$pyupgrade_cmd" ]; then
+        find $target_paths -name '*.py' -not -path '*/.pixi/*' -print0 2>/dev/null \
+            | xargs -0 -r "$pyupgrade_cmd" --py312-plus 2>/dev/null || true
+    fi
+    if [ -n "$refactor_cmd" ]; then
+        "$refactor_cmd" --workers 1 --apply $target_paths >& /dev/null || true
+    fi
+    if ! git diff --quiet; then
+        log_error "py312 transforms NOT idempotent — second pass produced diff. Aborting rebuild."
+        log_detail "Run 'git diff' to inspect the non-deterministic rule."
+        return 1
+    fi
+
+    log_result true "py312 transforms idempotent"
+    return 0
+}
+
+sync_base_branch() {
+    local base_branch="$1"
+
+    log_section "Syncing $base_branch with $DEVELOPMENT_BRANCH"
+
+    local checkout_output
+    checkout_output=$(git checkout "$base_branch" 2>&1)
+    local checkout_status=$?
+    if [ $checkout_status -ne 0 ]; then
+        log_error "Failed to checkout $base_branch (exit $checkout_status)"
+        log_detail "git output: $checkout_output"
+        indent_pop
+        return 1
+    fi
+
+    # Check if development has new commits
+    if git merge-base --is-ancestor "$DEVELOPMENT_BRANCH" "$base_branch" 2>/dev/null; then
+        log_operation "Already up to date with $DEVELOPMENT_BRANCH"
+        indent_pop
+        return 0
+    fi
+
+    # Merge development into base branch (skip hooks/gpg for script-internal merge)
+    if git merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
+        log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
+    else
+        # Conflicts — classify as format-only vs logical
+        local logical_conflicts=()
+        local format_only=()
+
+        while IFS= read -r file; do
+            case "$file" in
+                # CI/test config files have logical changes — need manual review
+                pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                    logical_conflicts+=("$file")
+                    ;;
+                *)
+                    # All other conflicts are format-only — safe to accept upstream
+                    format_only+=("$file")
+                    ;;
+            esac
+        done < <(git diff --name-only --diff-filter=U)
+
+        if [ ${#logical_conflicts[@]} -gt 0 ]; then
+            log_error "Conflicts in logical files — manual resolution needed:"
+            for f in "${logical_conflicts[@]}"; do
+                log_detail "  $f"
+            done
+            git_quiet merge --abort
+            indent_pop
+            return 1
+        fi
+
+        # Format-only conflicts: accept upstream content, will reformat below
+        for f in "${format_only[@]}"; do
+            git checkout --theirs "$f" 2>/dev/null
+            git add "$f"
+        done
+        git commit --no-verify --no-edit >& /dev/null || {
+            log_error "Failed to commit merge resolution"
+            git_quiet merge --abort 2>/dev/null
+            indent_pop
+            return 1
+        }
+        log_operation "Resolved ${#format_only[@]} format-only conflicts"
+    fi
+
+    # Re-initialize submodules after merge (development doesn't track them,
+    # but ci-base does via .gitmodules).  The merge may leave stale working
+    # trees; a sync+update restores the correct gitlinks and checkouts
+    # without touching the index entries that pixi needs.
+    if [ -f ".gitmodules" ]; then
+        git submodule sync --quiet 2>/dev/null
+        git submodule update --init --force 2>/dev/null
+    fi
+
+    # Run idempotent py312 transforms BEFORE ruff format so the format pass
+    # also normalizes any whitespace introduced by AST rewrites.
+    if ! run_py312_transforms; then
+        log_error "py312 transforms failed — aborting base branch sync"
+        indent_pop
+        return 1
+    fi
+
+    # Reformat any new/changed upstream files.
+    # Use ruff directly — pixi run format fails before pixi-workspace is merged
+    # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
+    local format_ok=false
+    local ruff_cmd=""
+    if command -v ruff &> /dev/null; then
+        ruff_cmd="ruff"
+    elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+        ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+    fi
+
+    if [ -n "$ruff_cmd" ]; then
+        if $ruff_cmd format hummingbot test controllers scripts >& /dev/null; then
+            format_ok=true
+        else
+            log_warning "ruff format failed"
+        fi
+    else
+        log_warning "ruff not found — skipping format step"
+    fi
+
+    if [ "$format_ok" = true ]; then
+        if ! git diff --quiet; then
+            git add -A -- . ':!sub-packages'
+            git commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
+            log_operation "Formatted new upstream files"
+        else
+            log_operation "No formatting changes needed"
+        fi
+    fi
+
+    log_result true "Base branch synced"
     return 0
 }
 
@@ -47,32 +273,14 @@ check_mergeability() {
     local branch="$1"
     local target="$2"
 
-    # Store current branch
-    local current_branch
-    current_branch=$(git_quiet rev-parse --abbrev-ref HEAD)
-
-    # Make sure working directory is clean
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-        log_error "Cannot check mergeability with uncommitted changes"
-        return 1
-    fi
-
-    # Switch to target branch
-    git checkout "$target" >& /dev/null || {
-        log_error "Failed to checkout $target"
-        git checkout "$current_branch"
-        return 1
-    }
-
-    # Try merge with --no-commit
-    if git merge --no-commit --no-ff "$branch" >& /dev/null; then
-        git merge --abort 2> /dev/null
-        git checkout "$current_branch" 2> /dev/null
+    # Use git merge-tree (plumbing) to check mergeability without touching
+    # the working tree.  This avoids "unable to rmdir sub-packages/*" errors
+    # caused by submodule directories that exist on bleeding-edge/ci-base but
+    # not on the target branch.
+    if git merge-tree --write-tree "$target" "$branch" > /dev/null 2>&1; then
         return 0
     else
         log_error "$branch has conflicts with $target"
-        git_quiet merge --abort
-        git_quiet checkout "$current_branch"
         return 1
     fi
 }
@@ -281,11 +489,16 @@ sync_branch() {
     fi
     log_operation "$(colorize "$GREEN" "Branch found: $location")"
 
-    # Check mergeability with development (skip during rebuild — _for_bleed
-    # branches are bleeding-edge-only and may not merge into development)
+    # Check mergeability against the base branch (ci-base).  All _for_bleed
+    # branches are based on ci-base, not development — checking against
+    # development always fails on submodule entries that development lacks.
+    # Skip during rebuild (branches are force-merged anyway).
     if [ "$target" = "$FEATURE_BRANCH" ] && [ "$REBUILD_MODE" != "true" ]; then
-        check_mergeability "$branch" "$DEVELOPMENT_BRANCH" || {
-            log_error "Mergeability check failed"
+        local base_branch
+        base_branch="$(get_base_branch "$target")"
+        : "${base_branch:=$DEVELOPMENT_BRANCH}"  # fallback if no base configured
+        check_mergeability "$branch" "$base_branch" || {
+            log_error "Mergeability check failed (against $base_branch)"
             indent_pop
             return 1
         }
@@ -332,14 +545,46 @@ sync_branch() {
             return 1
         }
         log_result true "Done"
-        indent_pop
         return 0
     else
         git_quiet merge --abort
 
-        # Attempt worktree-based rebase onto current bleeding-edge HEAD
+        # In rebuild mode, try format-aware merge before worktree rebase.
+        # Feature branches are unformatted; bleeding-edge is formatted.
+        # -X theirs prefers feature content for conflicting hunks (usually
+        # format-only), then ruff format fixes the result.
         if [ "$REBUILD_MODE" = "true" ]; then
-            log_operation "Merge conflict — attempting worktree rebase"
+            log_operation "Merge conflict — trying format-aware merge"
+            if git merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
+                # Merge succeeded with -X theirs — now reformat
+                local ruff_cmd=""
+                if command -v ruff &> /dev/null; then
+                    ruff_cmd="ruff"
+                elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+                    ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+                fi
+                if [ -n "$ruff_cmd" ] && ! git diff --quiet; then
+                    $ruff_cmd format hummingbot test controllers scripts >& /dev/null
+                fi
+                if ! git diff --quiet; then
+                    git add -A
+                    git commit --no-verify -m "style: ruff format after $branch merge" >& /dev/null
+                    log_operation "Formatted after merge"
+                fi
+                handle_new_files || {
+                    log_error "Failed"
+                    indent_pop
+                    return 1
+                }
+                log_result true "Done (format-aware merge)"
+                return 0
+            fi
+            git_quiet merge --abort 2>/dev/null
+        fi
+
+        # Fallback: worktree-based rebase onto current bleeding-edge HEAD
+        if [ "$REBUILD_MODE" = "true" ]; then
+            log_operation "Format-aware merge failed — attempting worktree rebase"
             local wt_dir="${REPO_PATH}/.worktrees/rebase-$(basename "$branch")"
             local current_head
             current_head=$(git rev-parse HEAD)
@@ -598,53 +843,90 @@ main() {
       ensure_clean_state || exit 1
       log_section "$(colorize "$YELLOW" "Rebuilding")"
 
-      log_operation "Checkout development branch"
-      git_quiet checkout "$DEVELOPMENT_BRANCH"
-      log_operation "Delete feature branch"
-      git_quiet branch -D "$FEATURE_BRANCH" >& /dev/null
-      log_operation "Create feature branch"
-      git_quiet checkout -b "$FEATURE_BRANCH"
+      # Determine base branch from config (falls back to development if unset)
+      local base_branch
+      base_branch="$(get_base_branch "$FEATURE_BRANCH")"
 
-      # Clean up embedded git repos left over from prior feature branch.
-      # development doesn't have .gitmodules, so sub-packages/ dirs from
-      # the old bleeding-edge persist as embedded repos and break git add.
-      if [ -d "sub-packages" ]; then
-          log_operation "Clean embedded sub-package repos"
-          find sub-packages -maxdepth 2 -name ".git" -exec rm -rf {} + 2>/dev/null
-          rm -rf sub-packages/*/
+      if [ -n "$base_branch" ]; then
+          # Sync base branch with development (merge + format)
+          sync_base_branch "$base_branch" || {
+              log_error "Base branch sync failed — rebuild aborted"
+              exit 1
+          }
+
+          log_operation "Create $FEATURE_BRANCH from $base_branch"
+          git_quiet checkout "$base_branch"
+          git_quiet branch -D "$FEATURE_BRANCH" >& /dev/null
+          git_quiet checkout -b "$FEATURE_BRANCH"
+      else
+          # No base branch configured — use development directly (legacy behavior)
+          log_operation "Checkout development branch"
+          git_quiet checkout "$DEVELOPMENT_BRANCH"
+          log_operation "Delete feature branch"
+          git_quiet branch -D "$FEATURE_BRANCH" >& /dev/null
+          log_operation "Create feature branch"
+          git_quiet checkout -b "$FEATURE_BRANCH"
+
+          # Clean up embedded git repos left over from prior feature branch.
+          if [ -d "sub-packages" ]; then
+              log_operation "Clean embedded sub-package repos"
+              find sub-packages -maxdepth 2 -name ".git" -exec rm -rf {} + 2>/dev/null
+              rm -rf sub-packages/*/
+          fi
       fi
 
       # Ensure the new branch is properly initialized
       log_operation "Initialize feature branch"
-      git commit --allow-empty -m "Initialize $FEATURE_BRANCH" >& /dev/null || {
+      git commit --allow-empty --no-verify -m "Initialize $FEATURE_BRANCH" >& /dev/null || {
           log_error "Failed to initialize feature branch"
           exit 1
       }
       log_result true "Rebuild complete"
   fi
 
+  INDENT_LEVEL=0  # Flatten output for branch processing
+
   # For each target branch in the config
   while IFS= read -r target_branch; do
       [ -z "$target_branch" ] && continue
 
-      log_section "$(colorize "$BLUE" "Processing target branch: $target_branch")"
+      log_step "$(colorize "$BLUE" "Processing target branch: $target_branch")"
 
       # For each tracked branch under that target
+      local loop_indent=$INDENT_LEVEL
       while IFS= read -r branch; do
           [ -z "$branch" ] && continue
 
           enabled="$(is_branch_enabled "$target_branch" "$branch")"
-          permanent="$(is_branch_permanent "$target_branch" "$branch")"
-          feature_only="$(is_branch_feature_only "$target_branch" "$branch")"
 
           if [ "$enabled" = "true" ]; then
+              INDENT_LEVEL=$loop_indent  # Reset indent before each branch
               sync_branch "$target_branch" "$branch"
-              log_step "Branch $branch processed"
           fi
       done < <(get_tracked_branches_sorted "$target_branch")
-      indent_pop
+      INDENT_LEVEL=$loop_indent
 
   done < <(get_target_branches)
+
+  # Final format pass — merges can produce unformatted results even when
+  # individual branches are clean (e.g. merge conflict resolution artifacts
+  # or content from different formatting epochs).
+  if [ "$REBUILD_MODE" = "true" ]; then
+      local ruff_cmd=""
+      if command -v ruff &> /dev/null; then
+          ruff_cmd="ruff"
+      elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+          ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+      fi
+      if [ -n "$ruff_cmd" ]; then
+          $ruff_cmd format hummingbot test controllers scripts >& /dev/null
+          if ! git diff --quiet; then
+              git add -A -- . ':!sub-packages'
+              git commit --no-verify -m "style: final ruff format pass after rebuild" >& /dev/null
+              log_step "Applied final format pass"
+          fi
+      fi
+  fi
 
   log_step "Branch tracking completed successfully!"
 }

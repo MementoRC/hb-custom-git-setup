@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py312-rules"
+version = "0.1.0"
+description = "Python 3.12 migration rules for Hummingbot bleeding-edge — built on refactor AST framework"
+requires-python = ">=3.10"
+dependencies = [
+    "refactor>=0.6",
+]
+
+[project.scripts]
+refactor-py312 = "py312_rules.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["py312_rules*"]
+exclude = ["tests*"]
