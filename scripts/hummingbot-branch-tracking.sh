@@ -169,6 +169,12 @@ sync_base_branch() {
         return 0
     fi
 
+    # Capture HEAD before the sync merge so the format pass can scope itself to
+    # only files actually introduced or modified by this merge (not pre-existing
+    # working-tree content).
+    local pre_sync_sha
+    pre_sync_sha=$(git rev-parse HEAD)
+
     # Merge development into base branch (skip hooks/gpg for script-internal merge)
     if git merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
         log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
@@ -253,12 +259,23 @@ sync_base_branch() {
     fi
 
     if [ "$format_ok" = true ]; then
-        if ! git diff --quiet; then
-            git add -A -- . ':!sub-packages'
-            git commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
-            log_operation "Formatted new upstream files"
+        # Only format files actually introduced/modified by the development sync (was: untracked cruft)
+        local -a sync_py_files=()
+        while IFS= read -r f; do
+            [[ "$f" == sub-packages/* ]] && continue
+            [ -f "$f" ] && sync_py_files+=("$f")
+        done < <(git diff --name-only --diff-filter=AM "${pre_sync_sha}..HEAD" -- '*.py')
+        if [ ${#sync_py_files[@]} -gt 0 ]; then
+            # Check whether ruff actually changed any of these files
+            if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
+                git add -- "${sync_py_files[@]}"
+                git commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
+                log_operation "Formatted new upstream files"
+            else
+                log_operation "No formatting changes needed"
+            fi
         else
-            log_operation "No formatting changes needed"
+            log_operation "No new upstream Python files to format"
         fi
     fi
 
