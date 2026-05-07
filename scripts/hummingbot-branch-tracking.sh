@@ -54,6 +54,21 @@ get_base_branch() {
     fi
 }
 
+assert_clean_working_tree() {
+    local repo_path="$1"
+    local unexpected
+    # Untracked files outside sub-packages/ — those should NEVER exist at rebuild entry
+    unexpected=$(git -C "$repo_path" ls-files --others --exclude-standard | grep -v '^sub-packages/' || true)
+    if [[ -n "$unexpected" ]]; then
+        echo "ERROR: rebuild aborted — unexpected untracked files in working tree:" >&2
+        echo "$unexpected" >&2
+        echo "" >&2
+        echo "Resolve manually before retrying: stash, remove, or commit them." >&2
+        return 1
+    fi
+    return 0
+}
+
 ###############################################################################
 # Python 3.12 Transform Stage
 # ---------------------------
@@ -149,6 +164,9 @@ run_py312_transforms() {
 
 sync_base_branch() {
     local base_branch="$1"
+
+    # Defense-in-depth: refuse to start if working tree has unexpected untracked files
+    assert_clean_working_tree "$REPO_PATH" || return 1
 
     log_section "Syncing $base_branch with $DEVELOPMENT_BRANCH"
 
