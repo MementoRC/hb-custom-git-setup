@@ -262,7 +262,96 @@ sync_base_branch() {
         fi
     fi
 
+    # Merge _for_ci/* branches after format pass — ci-base-layer targeted fixes.
+    # Uses the same tracked_branches config under target_branches.ci-base.
+    merge_for_ci_branches "$base_branch" || {
+        log_error "_for_ci/* merge failed — rebuild aborted"
+        return 1
+    }
+
     log_result true "Base branch synced"
+    return 0
+}
+
+###############################################################################
+# _for_ci/* Merge Pass
+# --------------------
+# Merges branches listed under target_branches.ci-base.tracked_branches into
+# the base branch (ci-base).  Runs AFTER the development sync + format pass.
+# Abort gates mirror _for_bleed: logical conflicts on pyproject.toml,
+# conftest.py, .github/, .pre-commit-config.yaml cause hard abort.
+###############################################################################
+merge_for_ci_branches() {
+    local base_branch="$1"
+
+    # Read branches from YAML; skip if none configured
+    local for_ci_branches
+    for_ci_branches="$(yq -r '.target_branches["ci-base"].tracked_branches // [] | .[] | select(.enabled == true) | .name' "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$for_ci_branches" ]; then
+        log_operation "No _for_ci/* branches configured — skipping"
+        return 0
+    fi
+
+    log_section "Merging _for_ci/* branches into $base_branch"
+
+    while IFS= read -r branch; do
+        [ -z "$branch" ] && continue
+        log_operation "Merging $branch"
+
+        local location
+        location=$(branch_exists "$branch")
+        if [ "$location" = "none" ]; then
+            log_error "_for_ci branch $branch not found — skipping"
+            continue
+        fi
+
+        local ref="$branch"
+        if [ "$location" = "remote" ]; then
+            git fetch origin "$branch" >& /dev/null || { log_error "Fetch failed for $branch"; return 1; }
+            ref="origin/$branch"
+        fi
+
+        git checkout "$base_branch" >& /dev/null || { log_error "Checkout $base_branch failed"; return 1; }
+
+        if git merge-base --is-ancestor "$ref" "$base_branch" 2>/dev/null; then
+            log_operation "$branch already in $base_branch — skipping"
+            continue
+        fi
+
+        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
+            log_result true "$branch merged cleanly"
+        else
+            # Classify conflicts: logical → abort, format-only → auto-resolve
+            local logical_conflicts=() format_only=()
+            while IFS= read -r file; do
+                case "$file" in
+                    pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                        logical_conflicts+=("$file") ;;
+                    *)
+                        format_only+=("$file") ;;
+                esac
+            done < <(git diff --name-only --diff-filter=U)
+
+            if [ ${#logical_conflicts[@]} -gt 0 ]; then
+                log_error "Logical conflicts in $branch — manual resolution needed:"
+                for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                git merge --abort >& /dev/null
+                return 1
+            fi
+
+            for f in "${format_only[@]}"; do
+                git checkout --theirs "$f" 2>/dev/null
+                git add "$f"
+            done
+            git commit --no-verify --no-edit >& /dev/null || {
+                log_error "Failed to commit format-only conflict resolution for $branch"
+                git merge --abort >& /dev/null
+                return 1
+            }
+            log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+        fi
+    done < <(echo "$for_ci_branches")
+
     return 0
 }
 

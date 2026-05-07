@@ -23,10 +23,24 @@
 # Last reviewed: 2026-04-17
 
 target_branches:
+  ci-base:
+    # _for_ci/* branches: ci-base-layer fixes merged AFTER the development
+    # sync + format pass, BEFORE bleeding-edge rebuilds from ci-base.
+    # Same logical-conflict abort gates as _for_bleed (pyproject.toml,
+    # conftest.py, .github/, .pre-commit-config.yaml).
+    tracked_branches:
+      - name: _for_ci/fix-pytest-asyncio-call-sync-deadlock
+        enabled: true
+        tier: bugfix
+        parent: null
+        description: "Threadsafe call_sync fix — pytest-asyncio cross-thread deadlock exposed by asyncio_mode=auto"
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
-    # Synced with development + pixi run format before each rebuild.
+    # Synced with development + pixi run format + _for_ci/* merges before each rebuild.
     base_branch: ci-base
 
     tracked_branches:
