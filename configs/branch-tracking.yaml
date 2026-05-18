@@ -37,6 +37,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-singleton-pollution-in-command-tests
+        enabled: true
+        tier: bugfix
+        parent: null
+        description: "Resets singletons in command/ tests via autouse fixture"
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
@@ -111,6 +119,13 @@ target_branches:
         enabled: true
         tier: feature
         description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/web-assistant-extraction
+        enabled: true
+        tier: feature
+        description: "web_assistant + api_throttler shim re-exporting from sub-packages/web-assistant; consumers migrate in follow-up batches"
         permanent: false
         disable_when_in_development: true
 
