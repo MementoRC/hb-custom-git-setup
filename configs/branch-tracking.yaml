@@ -38,7 +38,8 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/fix-singleton-pollution-in-command-tests
-        enabled: true
+        enabled: false
+        # TODO: re-enable once the _for_ci/fix-singleton-pollution-in-command-tests branch is pushed to origin
         tier: bugfix
         parent: null
         description: "Resets singletons in command/ tests via autouse fixture"
