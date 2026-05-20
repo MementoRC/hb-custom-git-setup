@@ -146,6 +146,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      # Batch 3 of web-assistant consumer migration (hummingbot.core.web_assistant/api_throttler → web_assistant)
+      - name: _for_bleed/web-assistant-migration-batch-3-core-infra
+        enabled: true
+        tier: feature
+        description: "Batch 3 of web-assistant consumer migration: hummingbot/core/ + hummingbot/data_feed/ + hummingbot/connector/utilities/ (~28 files)"
+        permanent: false
+        disable_when_in_development: true
+
       # _for_bleed/market-simulator: REMOVED (2026-04-05)
       # Replaced by hb-market-simulator submodule via _for_bleed/pixi-workspace
 
