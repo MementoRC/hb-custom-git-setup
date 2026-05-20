@@ -122,7 +122,7 @@ run_py312_transforms() {
     # pickle Rule classes that import `ast` (TypeError: cannot pickle module).
     if [ -n "$refactor_cmd" ]; then
         # shellcheck disable=SC2086
-        "$refactor_cmd" --workers 1 --apply $target_paths >& /dev/null || {
+        "$refactor_cmd" --workers 1 $target_paths >& /dev/null || {
             log_error "refactor-py312 failed"
             return 1
         }
@@ -150,7 +150,7 @@ run_py312_transforms() {
             | xargs -0 -r "$pyupgrade_cmd" --py312-plus 2>/dev/null || true
     fi
     if [ -n "$refactor_cmd" ]; then
-        "$refactor_cmd" --workers 1 --apply $target_paths >& /dev/null || true
+        "$refactor_cmd" --workers 1 $target_paths >& /dev/null || true
     fi
     if ! git diff --quiet; then
         log_error "py312 transforms NOT idempotent — second pass produced diff. Aborting rebuild."
