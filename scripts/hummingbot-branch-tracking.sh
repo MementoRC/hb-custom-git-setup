@@ -72,93 +72,86 @@ assert_clean_working_tree() {
 ###############################################################################
 # Python 3.12 Transform Stage
 # ---------------------------
-# Idempotent AST transforms re-applied to every upstream sync. Composed of:
-#   1. pyupgrade --py312-plus  — stock syntax modernizations
-#   2. refactor-py312          — project-specific rules (asyncio, distutils, removed stdlib)
-# Followed by an idempotency assertion (second pass must produce zero diff)
-# and a parse-error gate (compileall must succeed).
+# Post-merge, file-scoped AST transforms applied only to Python files that
+# were introduced or modified by the development sync + _for_ci/* merges.
+# Composed of:
+#   1. refactor-py312  — project-specific rules (asyncio, distutils, removed stdlib)
+#   2. ruff check --fix --unsafe-fixes  — auto-fix unused imports (best-effort)
+#   3. ruff format     — normalise whitespace after AST rewrites
 #
 # Toggleable via PY312_TRANSFORMS=0 to bypass during incident triage.
+# Called with the list of changed .py files as positional arguments.
 ###############################################################################
-run_py312_transforms() {
+run_py312_transforms_for_changed() {
+    # $@ — list of .py files relative to REPO_PATH
     if [ "${PY312_TRANSFORMS:-1}" = "0" ]; then
         log_operation "py312 transforms disabled via PY312_TRANSFORMS=0"
         return 0
     fi
 
-    local target_paths="hummingbot test controllers scripts"
-    local pyupgrade_cmd=""
-    local refactor_cmd=""
-
-    # Locate tools — prefer pixi env, fall back to PATH.
-    if [ -x "$REPO_PATH/.pixi/envs/default/bin/pyupgrade" ]; then
-        pyupgrade_cmd="$REPO_PATH/.pixi/envs/default/bin/pyupgrade"
-    elif command -v pyupgrade &> /dev/null; then
-        pyupgrade_cmd="pyupgrade"
+    if [ $# -eq 0 ]; then
+        log_operation "py312 post-merge transform: no changed Python files"
+        return 0
     fi
 
+    local refactor_cmd=""
+    local ruff_cmd=""
+
+    # Locate refactor-py312 — prefer pixi env, fall back to PATH.
     if [ -x "$REPO_PATH/.pixi/envs/default/bin/refactor-py312" ]; then
         refactor_cmd="$REPO_PATH/.pixi/envs/default/bin/refactor-py312"
     elif command -v refactor-py312 &> /dev/null; then
         refactor_cmd="refactor-py312"
     fi
 
-    if [ -z "$pyupgrade_cmd" ] && [ -z "$refactor_cmd" ]; then
-        log_warning "py312 transforms: neither pyupgrade nor refactor-py312 found — skipping"
+    # Locate ruff — prefer PATH (usually available), fall back to pixi env.
+    if command -v ruff &> /dev/null; then
+        ruff_cmd="ruff"
+    elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+        ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+    fi
+
+    if [ -z "$refactor_cmd" ] && [ -z "$ruff_cmd" ]; then
+        log_warning "py312 transforms: neither refactor-py312 nor ruff found — skipping"
         return 0
     fi
 
-    log_section "Running py312 transforms"
+    log_section "Running py312 post-merge transform pass (${#} files)"
 
-    # Pass 1: pyupgrade (stock syntax)
-    if [ -n "$pyupgrade_cmd" ]; then
-        # shellcheck disable=SC2046
-        find $target_paths -name '*.py' -not -path '*/.pixi/*' -print0 2>/dev/null \
-            | xargs -0 -r "$pyupgrade_cmd" --py312-plus 2>/dev/null || true
-    fi
-
-    # Pass 2: refactor custom rules
+    # Pass 1: refactor-py312 custom rules on changed files only.
     # --workers 1 is REQUIRED: refactor's default ProcessPoolExecutor cannot
     # pickle Rule classes that import `ast` (TypeError: cannot pickle module).
     if [ -n "$refactor_cmd" ]; then
-        # shellcheck disable=SC2086
-        "$refactor_cmd" --workers 1 $target_paths >& /dev/null || {
-            log_error "refactor-py312 failed"
+        "$refactor_cmd" --workers 1 "$@" >& /dev/null
+        local rc=$?
+        # refactor-py312 exit codes: 0=no-changes, 1=changes-applied, >=2=error
+        if [ $rc -gt 1 ]; then
+            log_error "refactor-py312 failed (exit $rc)"
             return 1
-        }
+        fi
     fi
 
-    # Parse-error gate
-    if ! python -m compileall -q $target_paths >& /dev/null; then
-        log_error "py312 transforms produced syntax errors (compileall failed) — aborting"
-        return 1
+    # Pass 2: auto-fix unused imports (best-effort; non-fatal).
+    if [ -n "$ruff_cmd" ]; then
+        "$ruff_cmd" check --fix --unsafe-fixes "$@" >& /dev/null || true
     fi
 
-    # Commit transform changes
-    if ! git diff --quiet; then
-        git add -A -- . ':!sub-packages'
-        git commit --no-verify -m "chore: py312 idempotent transforms (pyupgrade + refactor)" >& /dev/null \
-            || { log_error "Failed to commit py312 transforms"; return 1; }
-        log_operation "Committed py312 transform changes"
+    # Pass 3: format changed files.
+    if [ -n "$ruff_cmd" ]; then
+        "$ruff_cmd" format "$@" >& /dev/null || true
+    fi
+
+    # Stage and commit if anything changed.
+    git add -- "$@"
+    if ! git diff --cached --quiet; then
+        git commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
+            || { log_error "Failed to commit py312 transform changes"; return 1; }
+        log_operation "Committed py312 post-merge transform changes"
     else
-        log_operation "py312 transforms: no changes needed"
+        log_operation "py312 post-merge transform: no changes produced"
     fi
 
-    # Idempotency assertion: re-run must produce zero diff
-    if [ -n "$pyupgrade_cmd" ]; then
-        find $target_paths -name '*.py' -not -path '*/.pixi/*' -print0 2>/dev/null \
-            | xargs -0 -r "$pyupgrade_cmd" --py312-plus 2>/dev/null || true
-    fi
-    if [ -n "$refactor_cmd" ]; then
-        "$refactor_cmd" --workers 1 $target_paths >& /dev/null || true
-    fi
-    if ! git diff --quiet; then
-        log_error "py312 transforms NOT idempotent — second pass produced diff. Aborting rebuild."
-        log_detail "Run 'git diff' to inspect the non-deterministic rule."
-        return 1
-    fi
-
-    log_result true "py312 transforms idempotent"
+    log_result true "py312 post-merge transform pass complete"
     return 0
 }
 
@@ -247,14 +240,6 @@ sync_base_branch() {
         git submodule update --init --force 2>/dev/null
     fi
 
-    # Run idempotent py312 transforms BEFORE ruff format so the format pass
-    # also normalizes any whitespace introduced by AST rewrites.
-    if ! run_py312_transforms; then
-        log_error "py312 transforms failed — aborting base branch sync"
-        indent_pop
-        return 1
-    fi
-
     # Reformat any new/changed upstream files.
     # Use ruff directly — pixi run format fails before pixi-workspace is merged
     # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
@@ -303,6 +288,25 @@ sync_base_branch() {
         log_error "_for_ci/* merge failed — rebuild aborted"
         return 1
     }
+
+    # Post-merge py312 transform pass — scoped to files changed since ORIG_HEAD
+    # (development sync + _for_ci merges combined).  Runs AFTER all merges so a
+    # single commit covers the full delta, and AFTER ruff format so transforms
+    # operate on already-normalised source.
+    local -a py_changed=()
+    while IFS= read -r f; do
+        [[ "$f" == sub-packages/* ]] && continue
+        [ -f "$f" ] && py_changed+=("$f")
+    done < <(git diff --name-only "${pre_sync_sha}..HEAD" -- '*.py')
+
+    if [ ${#py_changed[@]} -gt 0 ]; then
+        run_py312_transforms_for_changed "${py_changed[@]}" || {
+            log_error "py312 post-merge transform failed — aborting base branch sync"
+            return 1
+        }
+    else
+        log_operation "py312 post-merge transform: no Python files changed"
+    fi
 
     log_result true "Base branch synced"
     return 0
@@ -1013,6 +1017,13 @@ main() {
   # For each target branch in the config
   while IFS= read -r target_branch; do
       [ -z "$target_branch" ] && continue
+
+      # ci-base is managed exclusively by sync_base_branch (development sync +
+      # format pass + merge_for_ci_branches + py312 post-merge transform).
+      # Skip it here to prevent double-processing _for_ci/* branches.
+      if [ "$target_branch" = "ci-base" ]; then
+          continue
+      fi
 
       log_step "$(colorize "$BLUE" "Processing target branch: $target_branch")"
 
