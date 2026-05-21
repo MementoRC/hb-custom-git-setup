@@ -162,6 +162,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      # Batch 5 of web-assistant consumer migration: final stragglers + shim removal
+      - name: _for_bleed/web-assistant-migration-batch-5-shim-removal
+        enabled: true
+        tier: feature
+        description: "Batch 5 of web-assistant consumer migration: migrate 3 stragglers + remove legacy shim modules"
+        permanent: false
+        disable_when_in_development: true
+
       # _for_bleed/market-simulator: REMOVED (2026-04-05)
       # Replaced by hb-market-simulator submodule via _for_bleed/pixi-workspace
 
