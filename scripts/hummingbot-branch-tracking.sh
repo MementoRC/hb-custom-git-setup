@@ -161,6 +161,9 @@ sync_base_branch() {
     # Defense-in-depth: refuse to start if working tree has unexpected untracked files
     assert_clean_working_tree "$REPO_PATH" || return 1
 
+    # Register merge.ours driver for .gitattributes resolution (idempotent)
+    git -C "$REPO_PATH" config merge.ours.driver true
+
     log_section "Syncing $base_branch with $DEVELOPMENT_BRANCH"
 
     local checkout_output
