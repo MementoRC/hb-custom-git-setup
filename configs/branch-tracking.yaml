@@ -124,9 +124,9 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_bleed/web-assistant-extraction
-        enabled: true
+        enabled: false
         tier: feature
-        description: "web_assistant + api_throttler shim re-exporting from sub-packages/web-assistant; consumers migrate in follow-up batches"
+        description: "OBSOLETE: PR 3b soft-migration approach superseded by hard migration in batches 1-5. install-subpackages addition salvaged to ci-base directly."
         permanent: false
         disable_when_in_development: true
 
