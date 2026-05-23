@@ -170,6 +170,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      # Async-utils sub-package extraction
+      - name: _for_bleed/async-utils-migration
+        enabled: true
+        tier: feature
+        description: "Async-utils sub-package extraction: 4-batch consumer migration + Phase 4 source deletion"
+        permanent: false
+        disable_when_in_development: true
+
       # _for_bleed/market-simulator: REMOVED (2026-04-05)
       # Replaced by hb-market-simulator submodule via _for_bleed/pixi-workspace
 
@@ -222,6 +230,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
         parent: _for_bleed/add-new-order-types
+
+      - name: _for_bleed/logger-callback-refactor
+        enabled: true
+        tier: feature
+        description: "Phase 0 of MementoRC/hb-logger#1 extraction: replace deferred HummingbotApplication imports in HummingbotLogger.notify/network with callback registration pattern (register_notify_handler / register_network_handler classmethods) to break the logger->application circular dependency."
+        permanent: false
+        disable_when_in_development: true
 
       - name: _for_bleed/position-exchange-executor
         enabled: true
