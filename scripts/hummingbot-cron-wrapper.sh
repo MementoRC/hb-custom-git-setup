@@ -3,16 +3,15 @@
 # hummingbot-cron-wrapper.sh
 # --------------------------
 # Cron-safe entry point that orchestrates the full sync cycle:
-#   1. Upstream sync (hummingbot-maintenance.sh)
-#   2. Rebase _for_bleed/ branches onto development (rebase-all-onto-development.sh)
-#   3. Branch tracking merges (hummingbot-branch-tracking.sh)
-#   4. Interface compatibility check (hummingbot-interface-check.sh)
+#   1. Upstream sync (fetch upstream/development, fast-forward local, push)
+#   2. Branch tracking merges (hummingbot-branch-tracking.sh)
+#   3. Interface compatibility check (hummingbot-interface-check.sh)
 #
 # All output is captured to timestamped logs in logs/cron/.
 # Exit codes: 0=clean, 1=error, 2=conflicts need attention
 #
 # Usage:
-#   ./hummingbot-cron-wrapper.sh [--notify] [--skip-maintenance] [--skip-rebase] [--skip-tracking] [--skip-interface]
+#   ./hummingbot-cron-wrapper.sh [--notify] [--skip-upstream] [--skip-tracking] [--skip-interface]
 #
 # Cron example:
 #   0 3 * * 0 /path/to/hummingbot-cron-wrapper.sh --notify
@@ -31,8 +30,7 @@ SUMMARY_FILE="${CRON_LOG_DIR}/latest_summary.txt"
 
 # Flags
 DO_NOTIFY=false
-SKIP_MAINTENANCE=false
-SKIP_REBASE=false
+SKIP_UPSTREAM=false
 SKIP_TRACKING=false
 SKIP_INTERFACE=false
 
@@ -41,13 +39,12 @@ SKIP_INTERFACE=false
 ###############################################################################
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --notify)       DO_NOTIFY=true; shift ;;
-        --skip-maintenance) SKIP_MAINTENANCE=true; shift ;;
-        --skip-rebase)      SKIP_REBASE=true; shift ;;
+        --notify)           DO_NOTIFY=true; shift ;;
+        --skip-upstream)    SKIP_UPSTREAM=true; shift ;;
         --skip-tracking)    SKIP_TRACKING=true; shift ;;
         --skip-interface)   SKIP_INTERFACE=true; shift ;;
         --help)
-            echo "Usage: $0 [--notify] [--skip-maintenance] [--skip-rebase] [--skip-tracking] [--skip-interface]"
+            echo "Usage: $0 [--notify] [--skip-upstream] [--skip-tracking] [--skip-interface]"
             exit 0
             ;;
         *)
@@ -75,45 +72,11 @@ fi
 # Summary Tracking
 ###############################################################################
 OVERALL_STATUS=0
-MAINTENANCE_STATUS="skipped"
-REBASE_STATUS="skipped"
+UPSTREAM_STATUS="skipped"
 TRACKING_STATUS="skipped"
 INTERFACE_STATUS="skipped"
 ERRORS=()
 
-write_summary() {
-    local end_time
-    end_time="$(date '+%Y-%m-%d %H:%M:%S')"
-
-    cat > "$SUMMARY_FILE" <<EOF
-Hummingbot Sync Summary
-========================
-Run:        ${TIMESTAMP}
-Completed:  ${end_time}
-Overall:    $([ $OVERALL_STATUS -eq 0 ] && echo "CLEAN" || ([ $OVERALL_STATUS -eq 2 ] && echo "CONFLICTS" || echo "ERROR"))
-
-Steps:
-  Upstream Sync:     ${MAINTENANCE_STATUS}
-  Rebase Branches:   ${REBASE_STATUS}
-  Branch Tracking:   ${TRACKING_STATUS}
-  Interface Check:   ${INTERFACE_STATUS}
-  Doc Generation:    ${DOCS_STATUS}
-EOF
-
-    if [ ${#ERRORS[@]} -gt 0 ]; then
-        echo "" >> "$SUMMARY_FILE"
-        echo "Issues:" >> "$SUMMARY_FILE"
-        for err in "${ERRORS[@]}"; do
-            echo "  - ${err}" >> "$SUMMARY_FILE"
-        done
-    fi
-
-    echo "" >> "$SUMMARY_FILE"
-    echo "Log: ${CRON_LOG}" >> "$SUMMARY_FILE"
-
-    # Update symlink to latest log
-    ln -sf "$CRON_LOG" "${CRON_LOG_DIR}/latest.log"
-}
 
 send_notification() {
     local title="$1"
@@ -139,14 +102,14 @@ cd "$REPO_PATH" || {
     log_error "Failed to change to repository directory: $REPO_PATH"
     OVERALL_STATUS=1
     ERRORS+=("Cannot access repository: $REPO_PATH")
-    write_summary
+    write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
     exit 1
 }
 
 if ! check_git_repo; then
     OVERALL_STATUS=1
     ERRORS+=("Not a git repository")
-    write_summary
+    write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
     exit 1
 fi
 
@@ -155,69 +118,74 @@ if ! ensure_clean_state; then
     log_error "Working directory is dirty - cron sync requires clean state"
     OVERALL_STATUS=1
     ERRORS+=("Working directory not clean")
-    write_summary
+    write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
     exit 1
 fi
 
 ###############################################################################
-# Step 1: Upstream Sync (maintenance)
+# Step 1: Upstream Sync
+# ---------------------
+# Fast-forward local development to upstream/development without checkout.
+# This avoids "unable to rmdir sub-packages/*" errors from switching away
+# from branches that have submodules (bleeding-edge/ci-base).
 ###############################################################################
-if [ "$SKIP_MAINTENANCE" = false ]; then
+if [ "$SKIP_UPSTREAM" = false ]; then
     log_section "$(colorize "$BLUE" "Step 1: Upstream Sync")"
 
-    if [ -x "$SCRIPT_DIR/hummingbot-maintenance.sh" ]; then
-        if "$SCRIPT_DIR/hummingbot-maintenance.sh"; then
-            MAINTENANCE_STATUS="success"
-            log_result true "Upstream sync completed"
+    # Check if upstream remote exists
+    if ! git remote get-url upstream > /dev/null 2>&1; then
+        UPSTREAM_STATUS="skipped"
+        log_operation "No 'upstream' remote configured — skipping"
+        log_result true "Upstream sync skipped (no remote)"
+    else
+        # Fetch latest upstream/development
+        if git fetch upstream development > /dev/null 2>&1; then
+            log_operation "Fetched upstream/development"
+
+            # Check if local development can fast-forward to upstream
+            if git merge-base --is-ancestor development upstream/development 2>/dev/null; then
+                # Fast-forward: update local ref without checkout
+                git branch -f development upstream/development 2>/dev/null
+                log_operation "Fast-forwarded local development"
+
+                # Push updated development to origin
+                if git push origin development > /dev/null 2>&1; then
+                    UPSTREAM_STATUS="success"
+                    log_result true "Upstream sync completed"
+                else
+                    UPSTREAM_STATUS="failed"
+                    ERRORS+=("Failed to push development to origin")
+                    log_result false "Push to origin failed"
+                    OVERALL_STATUS=1
+                fi
+            elif git merge-base --is-ancestor upstream/development development 2>/dev/null; then
+                # Local is already ahead or at upstream — nothing to do
+                UPSTREAM_STATUS="success"
+                log_operation "Local development already up to date with upstream"
+                log_result true "Upstream sync completed (already current)"
+            else
+                # Local development has diverged from upstream — needs manual attention
+                UPSTREAM_STATUS="diverged"
+                ERRORS+=("Local development has diverged from upstream — manual rebase needed")
+                log_result false "Development diverged from upstream"
+                OVERALL_STATUS=1
+            fi
         else
-            MAINTENANCE_STATUS="failed"
-            ERRORS+=("Upstream sync failed")
-            log_result false "Upstream sync failed"
-            # A maintenance failure is serious but we continue to report
+            UPSTREAM_STATUS="failed"
+            ERRORS+=("Failed to fetch upstream/development")
+            log_result false "Upstream fetch failed"
             OVERALL_STATUS=1
         fi
-    else
-        MAINTENANCE_STATUS="not found"
-        ERRORS+=("hummingbot-maintenance.sh not found or not executable")
-        log_error "Maintenance script not available"
-        indent_pop
     fi
 else
-    log_step "Upstream sync: skipped (--skip-maintenance)"
+    log_step "Upstream sync: skipped (--skip-upstream)"
 fi
 
 ###############################################################################
-# Step 2: Rebase _for_bleed/ Branches onto Development (Method A)
-###############################################################################
-if [ "$SKIP_REBASE" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 2: Rebase Branches onto Development")"
-
-    if [ -x "$SCRIPT_DIR/rebase-all-onto-development.sh" ]; then
-        if "$SCRIPT_DIR/rebase-all-onto-development.sh"; then
-            REBASE_STATUS="success"
-            log_result true "Rebase completed"
-        else
-            REBASE_STATUS="failed"
-            ERRORS+=("Rebase failed - branch tracking will proceed with pre-rebase state")
-            log_result false "Rebase failed (non-fatal: branch tracking will still run)"
-            # Rebase failure is non-fatal: Method C (merge rebuild) can still succeed
-            [ $OVERALL_STATUS -eq 0 ] && OVERALL_STATUS=1
-        fi
-    else
-        REBASE_STATUS="not found"
-        ERRORS+=("rebase-all-onto-development.sh not found or not executable")
-        log_error "Rebase script not available"
-        indent_pop
-    fi
-else
-    log_step "Rebase branches: skipped (--skip-rebase)"
-fi
-
-###############################################################################
-# Step 3: Branch Tracking
+# Step 2: Branch Tracking
 ###############################################################################
 if [ "$SKIP_TRACKING" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 3: Branch Tracking")"
+    log_section "$(colorize "$BLUE" "Step 2: Branch Tracking")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-branch-tracking.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-branch-tracking.sh"; then
@@ -241,10 +209,10 @@ else
 fi
 
 ###############################################################################
-# Step 4: Interface Compatibility Check
+# Step 3: Interface Compatibility Check
 ###############################################################################
 if [ "$SKIP_INTERFACE" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 4: Interface Check")"
+    log_section "$(colorize "$BLUE" "Step 3: Interface Check")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-interface-check.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-interface-check.sh"; then
@@ -275,32 +243,11 @@ else
 fi
 
 ###############################################################################
-# Step 5: Documentation Generation
-###############################################################################
-DOCS_STATUS="skipped"
-
-if [ "$TRACKING_STATUS" = "success" ]; then
-    log_section "$(colorize "$BLUE" "Step 5: Documentation Generation")"
-
-    if cd "$REPO_PATH" && pixi run docs-generate >> "$CRON_LOG" 2>&1; then
-        DOCS_STATUS="success"
-        log_result true "Documentation generated"
-    else
-        DOCS_STATUS="failed"
-        ERRORS+=("Documentation generation failed (non-blocking)")
-        log_result false "Documentation generation failed (non-blocking)"
-        # Docs failure is non-blocking: don't change OVERALL_STATUS
-    fi
-else
-    log_step "Documentation generation: skipped (tracking did not succeed)"
-fi
-
-###############################################################################
 # Wrap Up
 ###############################################################################
 log_footer
 
-write_summary
+write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
 
 # Display summary
 echo ""

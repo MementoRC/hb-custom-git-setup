@@ -1067,6 +1067,12 @@ main() {
   fi
 
   log_step "Branch tracking completed successfully!"
+
+  if [ "$REBUILD_MODE" = true ]; then
+      local MANUAL_REBUILD_SUMMARY="${LOG_PATH}/manual_rebuild_latest.txt"
+      write_run_summary "$MANUAL_REBUILD_SUMMARY" 0 "n/a" "success" "n/a" "(stdout)"
+      log_step "Wrote manual rebuild summary to $MANUAL_REBUILD_SUMMARY"
+  fi
 }
 
 main "$@"

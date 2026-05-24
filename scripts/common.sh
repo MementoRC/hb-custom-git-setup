@@ -346,6 +346,71 @@ indent_pop() { ((INDENT_LEVEL--)); }
 get_indent() { printf "%${INDENT_LEVEL}s" "" | sed "s/ /  /g"; }
 
 ###############################################################################
+# 10) Shared Summary Writer
+###############################################################################
+# write_run_summary <target_file> <overall_status> <upstream_status> <tracking_status> <interface_status> <log_path> [errors_array_name]
+#
+# Writes a structured run-summary file. Used by both cron-wrapper (logs/cron/latest_summary.txt)
+# and branch-tracking --rebuild (logs/manual_rebuild_latest.txt).
+#
+# Args:
+#   target_file       - output file path (will be overwritten)
+#   overall_status    - integer exit code (0=clean, 2=conflicts, other=error)
+#   upstream_status   - human label for upstream sync phase, or "n/a"
+#   tracking_status   - human label for branch tracking phase, or "n/a"
+#   interface_status  - human label for interface check phase, or "n/a"
+#   log_path          - path to the underlying log file (or "(stdout)" for manual)
+#   errors_array_name - OPTIONAL: name of a bash array variable containing error strings
+write_run_summary() {
+    local target_file="$1"
+    local overall_status="$2"
+    local upstream_status="${3:-n/a}"
+    local tracking_status="${4:-n/a}"
+    local interface_status="${5:-n/a}"
+    local log_path="${6:-(stdout)}"
+    local errors_var="${7:-}"
+
+    local end_time
+    end_time="$(date '+%Y-%m-%d %H:%M:%S')"
+
+    local overall_label
+    if [ "$overall_status" -eq 0 ]; then
+        overall_label="CLEAN"
+    elif [ "$overall_status" -eq 2 ]; then
+        overall_label="CONFLICTS"
+    else
+        overall_label="ERROR"
+    fi
+
+    cat > "$target_file" <<EOF
+Hummingbot Sync Summary
+========================
+Run:        $(date '+%Y%m%d_%H%M%S')
+Completed:  ${end_time}
+Overall:    ${overall_label}
+
+Steps:
+  Upstream Sync:     ${upstream_status}
+  Branch Tracking:   ${tracking_status}
+  Interface Check:   ${interface_status}
+EOF
+
+    if [ -n "$errors_var" ]; then
+        local -n errors_ref="$errors_var"
+        if [ ${#errors_ref[@]} -gt 0 ]; then
+            echo "" >> "$target_file"
+            echo "Issues:" >> "$target_file"
+            for err in "${errors_ref[@]}"; do
+                echo "  - ${err}" >> "$target_file"
+            done
+        fi
+    fi
+
+    echo "" >> "$target_file"
+    echo "Log: ${log_path}" >> "$target_file"
+}
+
+###############################################################################
 # 9) Prevent Direct Execution
 ###############################################################################
 if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
