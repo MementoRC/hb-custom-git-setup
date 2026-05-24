@@ -255,6 +255,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/logger-type-cleanup
+        enabled: true
+        tier: feature
+        description: "Clean up 6 pre-existing type defects in hummingbot/logger (StreamHandler[str], TracebackType None guard, findCaller tuple annotation, log_encoder signature, dataclass instance guard, _log args tuple). Lets hb-logger sub-package drop the matching disable_error_code suppressions. Builds on _for_bleed/logger-callback-refactor."
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/logger-callback-refactor
+
       - name: _for_bleed/position-exchange-executor
         enabled: true
         tier: feature
