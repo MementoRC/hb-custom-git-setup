@@ -141,8 +141,8 @@ target_branches:
       # Connector-utils sub-package extraction Phase 5 (single-commit corrected shim)
       - name: _for_bleed/connector-utils-split
         enabled: true
-        tier: infrastructure
-        description: "Phase 5 of MementoRC/hb-connector-utils#1: delegate 5 pure helpers to connector_utils sub-package via re-export + nonce-injection shim wrappers. Processors kept INLINE (not moved to core/web_assistant/). Coordinates with web-assistant migration batch-5-shim-removal."
+        tier: feature
+        description: "Phase 5 of MementoRC/hb-connector-utils#1: delegate 5 pure helpers to connector_utils sub-package via re-export + nonce-injection shim wrappers. Processors kept INLINE (not moved to core/web_assistant/). Coordinates with web-assistant migration batch-5-shim-removal. Merged LAST (after batch-5-shim-removal and async-utils-migration) because import additions are additive on the post-migration canonical state."
         permanent: false
         disable_when_in_development: false
         local_only: false
