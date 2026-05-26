@@ -271,6 +271,103 @@ target_branches:
         disable_when_in_development: true
         parent: _for_bleed/add-new-order-types
 
+      # hb-event-bus parity: 10-branch Cython migration suite
+      # orderbook is the Cython cimport unblocker (must land first).
+      # The other 9 depend on orderbook landing and becoming available as a cimport source.
+
+      - name: _for_bleed/hb-event-bus-parity-orderbook
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/data_type/order_book.pyx consumer to hb-event-bus (Cython cimport unblocker — must land first)"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/hb-event-bus-parity-connector-base
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/connector/connector_base.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-event-forwarder
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/event/event_forwarder.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-event-listener
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/event/event_listener.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-event-logger
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/event/event_logger.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-event-reporter
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/event/event_reporter.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-paper-trade
+        enabled: true
+        tier: feature
+        description: "Migrate paper-trade connector to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-strategy-base
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/strategy/strategy_base.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-time-iterator
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/time_iterator.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/hb-event-bus-parity-trading-intensity
+        enabled: true
+        tier: feature
+        description: "Migrate hummingbot/core/data_type/trading_intensity_indicator.pyx to hb-event-bus"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/hb-event-bus-parity-orderbook
+
+      - name: _for_bleed/limit-order-pure-python
+        enabled: true
+        tier: feature
+        description: "Parallel pure-Python LimitOrder alongside Cython .pyx; prerequisite for hb-connector-data-types extraction"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/remove-conda-setup
+        enabled: true
+        tier: feature
+        description: "Remove conda-era install artifacts (setup/, Makefile, install); migrate Dockerfile from miniconda3 to pixi. Eliminates env-drift bugs."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_bleed_manual/kraken-tweaks
         enabled: true
         tier: feature
