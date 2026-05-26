@@ -81,6 +81,28 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/executor-mixins
+        enabled: true
+        tier: feature
+        description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/add-executor-factory
+        enabled: true
+        tier: feature
+        description: "ExecutorFactory with decorator-based registration for all 8 executors"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/executor-mixins
+
+      - name: _for_bleed/add-update-executor-action
+        enabled: true
+        tier: feature
+        description: "UpdateExecutorAction framework + controller volatility dispatch for progressive executor"
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_bleed/environment
         enabled: true
         tier: feature
@@ -111,13 +133,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
         interface_monitor: true
-
-      - name: _for_bleed/add-update-executor-action
-        enabled: true
-        tier: feature
-        description: "UpdateExecutorAction framework + controller volatility dispatch for progressive executor"
-        permanent: false
-        disable_when_in_development: true
 
       # _for_bleed/test-fixes: CONSOLIDATED into ci-and-testing (2026-04-16)
 
@@ -211,21 +226,6 @@ target_branches:
         description: "Cython-to-Augmented-Pure-Python framework: skill, docs, .gitignore for skills"
         permanent: false
         disable_when_in_development: true
-
-      - name: _for_bleed/executor-mixins
-        enabled: true
-        tier: feature
-        description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_bleed/add-executor-factory
-        enabled: true
-        tier: feature
-        description: "ExecutorFactory with decorator-based registration for all 8 executors"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/executor-mixins
 
       # _for_bleed/cython-framework-subpackage: REMOVED (2026-04-05)
       # Replaced by hb-cython-framework submodule via _for_bleed/pixi-workspace
