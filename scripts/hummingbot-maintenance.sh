@@ -34,12 +34,11 @@ run_full_compile_test() {
 
     log_message "${YELLOW}Running full compile/test for branch [$branch]...${NC}"
 
-    conda activate hummingbot
-    ./compile || {
+    pixi run build || {
             log_message "${RED}Failed to compile successfully${NC}"
             return 1
         }
-    make test || {
+    pixi run test || {
             log_message "${RED}Failed to complete the tests${NC}"
             return 1
         }
@@ -148,7 +147,7 @@ restore_working_state() {
     fi
     
     # Restore compiled libs
-    conda activate hummingbot && ./compile
+    pixi run build
 }
 
 ###############################################################################
@@ -290,8 +289,6 @@ cd "$REPO_PATH" || {
     log_message "${RED}Failed to change to repository directory: $REPO_PATH${NC}"
     exit 1
 }
-
-conda activate hummingbot
 
 # 3) Validate environment
 if ! validate_environment; then

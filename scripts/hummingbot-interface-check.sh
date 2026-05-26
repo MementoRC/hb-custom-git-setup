@@ -3,7 +3,7 @@
 # hummingbot-interface-check.sh
 # -----------------------------
 # Detects when upstream changes break base classes that the progressive
-# executor depends on. Uses conda hummingbot env for Python import checks.
+# executor depends on. Uses pixi env for Python import checks.
 #
 # Checks:
 #   - hummingbot.strategy_v2.executors.executor_base (ExecutorBase)
@@ -45,7 +45,7 @@ done
 ###############################################################################
 # Python Check Helper
 ###############################################################################
-# Runs a Python snippet in the hummingbot conda environment.
+# Runs a Python snippet via pixi run python (hummingbot pixi environment).
 # Returns 0 on success, 1 on import failure.
 run_python_check() {
     local description="$1"
@@ -56,7 +56,7 @@ run_python_check() {
     fi
 
     local output
-    output=$(python3 -c "$python_code" 2>&1)
+    output=$(pixi run python -c "$python_code" 2>&1)
     local status=$?
 
     if [ $status -ne 0 ]; then
@@ -309,13 +309,7 @@ cd "$REPO_PATH" || {
     exit 1
 }
 
-# Activate conda environment for Python imports
-log_step "Activating conda hummingbot environment"
-eval "$(conda shell.bash hook 2>/dev/null)" && conda activate hummingbot 2>/dev/null || {
-    log_error "Failed to activate conda hummingbot environment"
-    exit 1
-}
-
+# pixi run automatically activates the hummingbot environment
 # Run all interface checks
 check_executor_base
 check_executor_orchestrator

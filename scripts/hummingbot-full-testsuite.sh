@@ -101,8 +101,8 @@ run_full_feature_test() {
     log_message "${YELLOW}Running full test suite for [$branch]...${NC}"
     # Example: run Pytest across entire hummingbot code
     # You could add coverage flags, e.g.:
-    #   pytest --cov=hummingbot --cov-report=term-missing
-    if ! ( ./compile && make test ); then
+    #   pixi run pytest --cov=hummingbot --cov-report=term-missing
+    if ! ( pixi run build && pixi run test ); then
         log_message "${RED}Tests FAILED for branch [$branch].${NC}"
         exit 1
     fi
@@ -119,8 +119,6 @@ log_message "${YELLOW}Starting feature-branch test script...${NC}"
 if [ -n "$1" ]; then
     FEATURE_BRANCH="$1"
 fi
-
-conda activate hummingbot
 
 # 2) Ensure directories exist, change to REPO_PATH
 ensure_directories

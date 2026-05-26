@@ -104,18 +104,18 @@ record_commit_status() {
 ###############################################################################
 debug_git_info() {
     local commit="$1"
-    
-    log_message "DEBUG: Commit details for $commit:" "$TEST_LOG"
+
+    echo "DEBUG: Commit details for $commit:" >> "$TEST_LOG"
     git log -1 --pretty=format:"Hash: %h%nParent: %p%nAuthor: %an%nDate: %ad%nSubject: %s" "$commit" >> "$TEST_LOG"
-    log_message "" "$TEST_LOG"
-    
-    log_message "DEBUG: Files changed in commit $commit:" "$TEST_LOG"
+    echo "" >> "$TEST_LOG"
+
+    echo "DEBUG: Files changed in commit $commit:" >> "$TEST_LOG"
     git show --name-only --format="" "$commit" >> "$TEST_LOG"
-    log_message "" "$TEST_LOG"
-    
-    log_message "DEBUG: Diff stats for $commit:" "$TEST_LOG"
+    echo "" >> "$TEST_LOG"
+
+    echo "DEBUG: Diff stats for $commit:" >> "$TEST_LOG"
     git diff --stat "$commit^" "$commit" >> "$TEST_LOG"
-    log_message "" "$TEST_LOG"
+    echo "" >> "$TEST_LOG"
 }
 
 ###############################################################################
@@ -167,9 +167,9 @@ run_module_tests() {
     log_message "${BLUE}Using test file: $test_file${NC}" "$TEST_LOG"
 
     # Example coverage usage:
-    # python -m pytest "$test_file" --cov="hummingbot.$module_path" --cov-fail-under="$TEST_COVERAGE_THRESHOLD" -v
+    # pixi run pytest "$test_file" --cov="hummingbot.$module_path" --cov-fail-under="$TEST_COVERAGE_THRESHOLD" -v
 
-    if ! python -m pytest "$test_file" -v; then
+    if ! pixi run pytest "$test_file" -v; then
         log_message "${RED}Tests failed for $module_path${NC}" "$TEST_LOG"
         return 1
     fi
@@ -194,10 +194,9 @@ get_modified_source_files() {
 ###############################################################################
 # Main Script
 ###############################################################################
-# 1) Check that pytest is installed
-conda activate hummingbot
-if ! command -v pytest &> /dev/null; then
-    log_message "${RED}pytest is required but not installed. (pip install pytest pytest-cov)${NC}" "$TEST_LOG"
+# 1) Check that pytest is available via pixi
+if ! pixi run pytest --version &> /dev/null; then
+    log_message "${RED}pytest is required but not found in pixi environment.${NC}" "$TEST_LOG"
     exit 1
 fi
 
