@@ -176,6 +176,17 @@ sync_base_branch() {
         return 1
     fi
 
+    # Safety guard: confirm HEAD is actually on $base_branch before merging.
+    # A silent no-op checkout (e.g. already on bleeding-edge) would otherwise
+    # cause development to be merged into the wrong branch.
+    local current_branch
+    current_branch=$(git -C "$REPO_PATH" rev-parse --abbrev-ref HEAD)
+    if [ "$current_branch" != "$base_branch" ]; then
+        log_error "FATAL: sync_base_branch expected HEAD on '$base_branch' but found '$current_branch' — aborting to avoid merging $DEVELOPMENT_BRANCH into the wrong branch"
+        indent_pop
+        return 1
+    fi
+
     # Check if development has new commits
     if git merge-base --is-ancestor "$DEVELOPMENT_BRANCH" "$base_branch" 2>/dev/null; then
         log_operation "Already up to date with $DEVELOPMENT_BRANCH"

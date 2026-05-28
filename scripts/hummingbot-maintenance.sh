@@ -20,7 +20,6 @@ source "$SCRIPT_DIR/common.sh"
 # Overridable Variables
 ###############################################################################
 : "${DEVELOPMENT_BRANCH:="development"}"
-: "${FEATURE_BRANCH:="bleeding-edge"}"
 : "${LOCAL_REPO_DIR:="$HOME/PycharmProjects/Hummingbot/hummingbot"}"
 
 ###############################################################################
@@ -233,50 +232,6 @@ sync_development() {
 }
 
 ###############################################################################
-# sync_feature_branch
-# -------------------
-# Checks out (or creates) the feature branch if missing, then merges
-# DEVELOPMENT_BRANCH into the feature branch.
-###############################################################################
-sync_feature_branch() {
-    log_message "${YELLOW}Syncing feature branch [$FEATURE_BRANCH] with [$DEVELOPMENT_BRANCH]...${NC}"
-
-    # Attempt to checkout feature branch
-    if ! git checkout "$FEATURE_BRANCH" 2>/dev/null; then
-        log_message "${YELLOW}Feature branch [$FEATURE_BRANCH] doesn't exist. Creating...${NC}"
-        if ! git checkout -b "$FEATURE_BRANCH"; then
-            log_message "${RED}Failed to create feature branch [$FEATURE_BRANCH]${NC}"
-            exit 1
-        fi
-    fi
-
-    # Merge development into feature
-    if ! git merge "$DEVELOPMENT_BRANCH"; then
-        log_message "${RED}Merge conflicts detected in [$FEATURE_BRANCH].${NC}"
-        log_message "${YELLOW}Please resolve conflicts manually.${NC}"
-        # Not exiting so we can still restore stashed changes if needed
-    else
-        # Merge succeeded or did nothing (fast-forward)
-        local new_head
-        new_head="$(git rev-parse HEAD)"
-
-        # If HEAD changed from the old HEAD => new commits arrived
-        if [ -n "$old_head" ] && [ "$new_head" != "$old_head" ]; then
-            log_message "${YELLOW}New commits have been merged into [$FEATURE_BRANCH].${NC}"
-            # Now run compile/test
-            if ! run_full_compile_test "$FEATURE_BRANCH"; then
-                log_message "${RED}Compile/test step failed for [$FEATURE_BRANCH]: Reverting.${NC}"
-                # Revert
-                git reset --hard "$old_head"
-                exit 1
-            fi
-        else
-            log_message "${GREEN}No new commits were introduced into [$FEATURE_BRANCH].${NC}"
-        fi
-    fi
-}
-
-###############################################################################
 # Main Execution
 ###############################################################################
 log_message "${YELLOW}Starting branch maintenance...${NC}"
@@ -304,9 +259,6 @@ handle_working_changes
 
 # 6) Sync upstream development branch
 sync_development_upstream
-
-# 6) Sync development branch
-sync_feature_branch
 
 # 7) Restore local changes
 restore_working_state
