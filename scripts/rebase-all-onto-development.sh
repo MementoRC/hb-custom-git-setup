@@ -31,8 +31,9 @@ SKIP_INFRASTRUCTURE=""
 
 # Infrastructure branches: rebase onto development and form the merge base
 # that all feature branches rebase onto. Add new infra branches here.
+# NOTE: ci-base is NOT listed here — it is synced with development
+# separately by hummingbot-branch-tracking.sh during --rebuild.
 INFRASTRUCTURE_BRANCHES=(
-    "_for_bleed/ci-and-testing"
     "_for_bleed/pixi-workspace"
 )
 
@@ -299,7 +300,6 @@ else
     # Infrastructure branches use full git rebase (NOT scoped diff-and-apply).
     # Scoped rebase is lossy for infra branches: they touch many files across the
     # codebase and a second run on the already-narrowed branch produces an empty diff.
-    rebase_infra_branch "_for_bleed/ci-and-testing"
     rebase_infra_branch "_for_bleed/pixi-workspace"
 
 fi
@@ -434,7 +434,6 @@ if [ "$DRY_RUN" = "true" ]; then
 else
     echo "Rebased branches:"
     for branch in \
-        _for_bleed/ci-and-testing \
         _for_bleed/pixi-workspace \
         _for_bleed/environment _for_bleed/candles-public-api \
         _for_bleed/add-executor-lock-unlock-collateral \
