@@ -385,11 +385,16 @@ target_branches:
         parent: _for_bleed/hb-event-bus-parity-orderbook
 
       - name: _for_bleed/limit-order-pure-python
-        enabled: true
+        enabled: false
         tier: feature
         description: "Parallel pure-Python LimitOrder alongside Cython .pyx; prerequisite for hb-connector-data-types extraction"
         permanent: false
         disable_when_in_development: true
+        # Disabled 2026-05-31: blocked on active hb-event-bus extraction work.
+        # Rebase conflicts on hummingbot/core/event_bus_bridge.py — HEAD has the Phase B
+        # docstring but neither side has the later c_call dispatch fix (292427b3f from
+        # _for_bleed/hb-event-bus). Re-enable once event-bus work is merged and the bridge
+        # code is settled.
 
       - name: _for_bleed/remove-conda-setup
         enabled: true
