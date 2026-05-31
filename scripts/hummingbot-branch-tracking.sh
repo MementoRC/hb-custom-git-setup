@@ -724,12 +724,12 @@ sync_branch() {
             git_quiet merge --abort 2>/dev/null
         fi
 
-        # Fallback: worktree-based rebase onto current bleeding-edge HEAD
+        # Fallback: worktree-based rebase onto ci-base (permanent base, not ephemeral bleeding-edge)
         if [ "$REBUILD_MODE" = "true" ]; then
             log_operation "Format-aware merge failed — attempting worktree rebase"
             local wt_dir="${REPO_PATH}/.worktrees/rebase-$(basename "$branch")"
-            local current_head
-            current_head=$(git rev-parse HEAD)
+            local rebase_target
+            rebase_target=$(git rev-parse ci-base)
 
             # Clean up any stale worktree
             rm -rf "$wt_dir" 2>/dev/null
@@ -737,8 +737,8 @@ sync_branch() {
 
             # Create worktree on the conflicting branch
             if git worktree add "$wt_dir" "$ref" >& /dev/null; then
-                # Attempt automatic rebase onto current bleeding-edge HEAD
-                if (cd "$wt_dir" && GIT_EDITOR=true git -c commit.gpgsign=false -c rebase.gpgsign=false rebase "$current_head" >& /dev/null); then
+                # Attempt automatic rebase onto ci-base (permanent base, not ephemeral bleeding-edge)
+                if (cd "$wt_dir" && GIT_EDITOR=true git -c commit.gpgsign=false -c rebase.gpgsign=false rebase "$rebase_target" >& /dev/null); then
                     # Rebase succeeded — update branch ref and retry merge
                     local new_tip
                     new_tip=$(cd "$wt_dir" && git rev-parse HEAD)
