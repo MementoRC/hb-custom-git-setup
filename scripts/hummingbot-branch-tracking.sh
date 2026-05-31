@@ -35,7 +35,7 @@ handle_new_files() {
         log_operation "Adding new files..."
         git ls-files --others --exclude-standard -z | grep -zEv '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)' | xargs -0 -r git add
         # Skip hooks — these are auto-added files from merges, not user code
-        git commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
+        git -c commit.gpgsign=false commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
     fi
     return 0
 }
@@ -144,7 +144,7 @@ run_py312_transforms_for_changed() {
     # Stage and commit if anything changed.
     git add -- "$@"
     if ! git diff --cached --quiet; then
-        git commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
+        git -c commit.gpgsign=false commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
             || { log_error "Failed to commit py312 transform changes"; return 1; }
         log_operation "Committed py312 post-merge transform changes"
     else
@@ -201,7 +201,7 @@ sync_base_branch() {
     pre_sync_sha=$(git rev-parse HEAD)
 
     # Merge development into base branch (skip hooks/gpg for script-internal merge)
-    if git merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
+    if git -c commit.gpgsign=false merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
         log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
     else
         # Conflicts — classify as format-only vs logical
@@ -236,7 +236,7 @@ sync_base_branch() {
             git checkout --theirs "$f" 2>/dev/null
             git add "$f"
         done
-        git commit --no-verify --no-edit >& /dev/null || {
+        git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
             log_error "Failed to commit merge resolution"
             git_quiet merge --abort 2>/dev/null
             indent_pop
@@ -286,7 +286,7 @@ sync_base_branch() {
             # Check whether ruff actually changed any of these files
             if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
                 git add -- "${sync_py_files[@]}"
-                git commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
+                git -c commit.gpgsign=false commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
                 log_operation "Formatted new upstream files"
             else
                 log_operation "No formatting changes needed"
@@ -371,7 +371,7 @@ merge_for_ci_branches() {
             continue
         fi
 
-        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
+        if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
             log_result true "$branch merged cleanly"
         else
             # Classify conflicts: logical → abort, format-only → auto-resolve
@@ -396,7 +396,7 @@ merge_for_ci_branches() {
                 git checkout --theirs "$f" 2>/dev/null
                 git add "$f"
             done
-            git commit --no-verify --no-edit >& /dev/null || {
+            git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
                 log_error "Failed to commit format-only conflict resolution for $branch"
                 git merge --abort >& /dev/null
                 return 1
@@ -673,7 +673,7 @@ sync_branch() {
         return 0
     fi
 
-    if git merge --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
+    if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
         log_operation "Handle new files"
         handle_new_files || {
           log_error "Failed"
@@ -697,7 +697,7 @@ sync_branch() {
         # format-only), then ruff format fixes the result.
         if [ "$REBUILD_MODE" = "true" ]; then
             log_operation "Merge conflict — trying format-aware merge"
-            if git merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
+            if git -c commit.gpgsign=false merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
                 # Merge succeeded with -X theirs — now reformat
                 local ruff_cmd=""
                 if command -v ruff &> /dev/null; then
@@ -710,7 +710,7 @@ sync_branch() {
                 fi
                 if ! git diff --quiet; then
                     git add -A
-                    git commit --no-verify -m "style: ruff format after $branch merge" >& /dev/null
+                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format after $branch merge" >& /dev/null
                     log_operation "Formatted after merge"
                 fi
                 handle_new_files || {
@@ -738,7 +738,7 @@ sync_branch() {
             # Create worktree on the conflicting branch
             if git worktree add "$wt_dir" "$ref" >& /dev/null; then
                 # Attempt automatic rebase onto current bleeding-edge HEAD
-                if (cd "$wt_dir" && GIT_EDITOR=true git rebase "$current_head" >& /dev/null); then
+                if (cd "$wt_dir" && GIT_EDITOR=true git -c commit.gpgsign=false -c rebase.gpgsign=false rebase "$current_head" >& /dev/null); then
                     # Rebase succeeded — update branch ref and retry merge
                     local new_tip
                     new_tip=$(cd "$wt_dir" && git rev-parse HEAD)
@@ -749,7 +749,7 @@ sync_branch() {
                     git branch -f "$branch" "$new_tip" >& /dev/null 2>&1
 
                     # Retry the merge
-                    if git merge --no-ff "$branch" -m "Auto-merge $branch into $target (rebased)" >& /dev/null; then
+                    if git -c commit.gpgsign=false merge --no-ff "$branch" -m "Auto-merge $branch into $target (rebased)" >& /dev/null; then
                         log_operation "Handle new files"
                         handle_new_files || {
                             log_error "Failed"
@@ -1019,7 +1019,7 @@ main() {
 
       # Ensure the new branch is properly initialized
       log_operation "Initialize feature branch"
-      git commit --allow-empty --no-verify -m "Initialize $FEATURE_BRANCH" >& /dev/null || {
+      git -c commit.gpgsign=false commit --allow-empty --no-verify -m "Initialize $FEATURE_BRANCH" >& /dev/null || {
           log_error "Failed to initialize feature branch"
           exit 1
       }
@@ -1071,7 +1071,7 @@ main() {
           $ruff_cmd format hummingbot test controllers scripts >& /dev/null
           if ! git diff --quiet; then
               git add -A -- . ':!sub-packages'
-              git commit --no-verify -m "style: final ruff format pass after rebuild" >& /dev/null
+              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format pass after rebuild" >& /dev/null
               log_step "Applied final format pass"
           fi
       fi
