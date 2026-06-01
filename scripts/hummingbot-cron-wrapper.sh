@@ -209,10 +209,83 @@ else
 fi
 
 ###############################################################################
-# Step 3: Interface Compatibility Check
+# Step 3: Modularization Health Checks
+# -------------------------------------
+# Runs after bleeding-edge has the modularization pixi tasks available.
+# Non-fatal: failures accumulate in MODULAR_FAILURES but do not set OVERALL_STATUS
+# (these checks are advisory until tach.toml is fully populated).
+###############################################################################
+MODULAR_STATUS="skipped"
+MODULAR_FAILURES=0
+COMPAT_RESULT="skipped"
+BOUNDARY_RESULT="skipped"
+DEP_GRAPH_DIFF="skipped"
+
+if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
+    log_section "$(colorize "$BLUE" "Step 3: Modularization Health Checks")"
+
+    if cd "$REPO_PATH" 2>/dev/null; then
+        # compat-check: now covers all 14 sub-packages
+        log_operation "Running compat-check (all sub-packages)..."
+        if pixi run compat-check; then
+            COMPAT_RESULT="pass"
+            log_result true "compat-check passed"
+        else
+            COMPAT_RESULT="FAIL"
+            MODULAR_FAILURES=$((MODULAR_FAILURES + 1))
+            log_result false "compat-check failed"
+        fi
+
+        # lint-boundaries: tach boundary check (stub config initially)
+        log_operation "Running lint-boundaries (tach)..."
+        if pixi run lint-boundaries; then
+            BOUNDARY_RESULT="pass"
+            log_result true "lint-boundaries passed"
+        else
+            BOUNDARY_RESULT="FAIL"
+            MODULAR_FAILURES=$((MODULAR_FAILURES + 1))
+            log_result false "lint-boundaries failed"
+        fi
+
+        # dep-graph: snapshot for drift detection
+        log_operation "Running dep-graph snapshot..."
+        DEP_GRAPH_OUT="${CRON_LOG_DIR}/dep_graph_latest.json"
+        DEP_GRAPH_PREV="${CRON_LOG_DIR}/dep_graph_prev.json"
+        [ -f "$DEP_GRAPH_OUT" ] && mv "$DEP_GRAPH_OUT" "$DEP_GRAPH_PREV"
+        if pixi run dep-graph > "$DEP_GRAPH_OUT" 2>&1; then
+            if [ -f "$DEP_GRAPH_PREV" ]; then
+                DEP_GRAPH_DIFF=$(diff -q "$DEP_GRAPH_PREV" "$DEP_GRAPH_OUT" 2>&1 || echo "changed")
+            else
+                DEP_GRAPH_DIFF="initial snapshot"
+            fi
+            log_result true "dep-graph snapshot: $DEP_GRAPH_DIFF"
+        else
+            DEP_GRAPH_DIFF="FAIL"
+            MODULAR_FAILURES=$((MODULAR_FAILURES + 1))
+            log_result false "dep-graph failed"
+        fi
+
+        if [ $MODULAR_FAILURES -eq 0 ]; then
+            MODULAR_STATUS="pass"
+        else
+            MODULAR_STATUS="FAIL ($MODULAR_FAILURES check(s) failed)"
+            ERRORS+=("Modularization health: $MODULAR_FAILURES check(s) failed")
+            # Advisory only — do not escalate OVERALL_STATUS here
+        fi
+    else
+        MODULAR_STATUS="error (cannot cd to $REPO_PATH)"
+        log_error "Cannot cd to $REPO_PATH — skipping modularization checks"
+        indent_pop
+    fi
+else
+    log_step "Modularization health checks: skipped (tracking not run or failed)"
+fi
+
+###############################################################################
+# Step 4: Interface Compatibility Check
 ###############################################################################
 if [ "$SKIP_INTERFACE" = false ]; then
-    log_section "$(colorize "$BLUE" "Step 3: Interface Check")"
+    log_section "$(colorize "$BLUE" "Step 4: Interface Check")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-interface-check.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-interface-check.sh"; then
@@ -248,6 +321,18 @@ fi
 log_footer
 
 write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
+
+# Append modularization health detail (written after write_run_summary to avoid overwrite)
+if [ "$MODULAR_STATUS" != "skipped" ]; then
+    {
+        echo ""
+        echo "Modularization Health:"
+        echo "  Compat-check (all sub-packages): $COMPAT_RESULT"
+        echo "  Lint-boundaries (tach):          $BOUNDARY_RESULT"
+        echo "  Dep-graph diff:                  $DEP_GRAPH_DIFF"
+        echo "  Overall:                         $MODULAR_STATUS"
+    } >> "$SUMMARY_FILE"
+fi
 
 # Display summary
 echo ""

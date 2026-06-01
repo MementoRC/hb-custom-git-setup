@@ -62,6 +62,22 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/modularization-tooling
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "Replaces broken compat-check + adds test-all-subpackages, dep-graph, lint-boundaries pixi tasks + tach stub config"
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/modularization-docs
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "MODULARIZATION.md at repo root — static reference for solo-dev onboarding"
+        permanent: false
+        disable_when_in_development: false
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
