@@ -299,11 +299,16 @@ target_branches:
       # NOTE: All 10 parity branches have been superseded by _for_bleed/hb-event-bus (consolidation).
 
       - name: _for_bleed/hb-event-bus
-        enabled: true
+        enabled: false
         tier: feature
         description: "Consolidated event-bus bridge + conftest + 10 parity test suites; bumps event-bus submodule. Supersedes the 10 hb-event-bus-parity-* branches (now disabled)."
         permanent: false
         disable_when_in_development: true
+        # Disabled 2026-06-01: blocked on active hb-event-bus sub-package extraction work
+        # in /home/memento/PycharmProjects/Hummingbot/worktrees/hb-event-bus-phase-c.
+        # The branch is checked out in that dev worktree, preventing the rebuild script
+        # from creating its own worktree for merge fallback. Re-enable when the
+        # sub-package extraction is settled and the dev worktree is removed.
 
       - name: _for_bleed/hb-event-bus-parity-orderbook
         enabled: false
