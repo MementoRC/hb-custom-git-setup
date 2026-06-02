@@ -188,10 +188,10 @@ sync_base_branch() {
     fi
 
     # Check if development has new commits
+    local dev_already_merged=false
     if git merge-base --is-ancestor "$DEVELOPMENT_BRANCH" "$base_branch" 2>/dev/null; then
         log_operation "Already up to date with $DEVELOPMENT_BRANCH"
-        indent_pop
-        return 0
+        dev_already_merged=true
     fi
 
     # Capture HEAD before the sync merge so the format pass can scope itself to
@@ -200,104 +200,108 @@ sync_base_branch() {
     local pre_sync_sha
     pre_sync_sha=$(git rev-parse HEAD)
 
-    # Merge development into base branch (skip hooks/gpg for script-internal merge)
-    if git -c commit.gpgsign=false merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
-        log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
-    else
-        # Conflicts — classify as format-only vs logical
-        local logical_conflicts=()
-        local format_only=()
-
-        while IFS= read -r file; do
-            case "$file" in
-                # CI/test config files have logical changes — need manual review
-                pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
-                    logical_conflicts+=("$file")
-                    ;;
-                *)
-                    # All other conflicts are format-only — safe to accept upstream
-                    format_only+=("$file")
-                    ;;
-            esac
-        done < <(git diff --name-only --diff-filter=U)
-
-        if [ ${#logical_conflicts[@]} -gt 0 ]; then
-            log_error "Conflicts in logical files — manual resolution needed:"
-            for f in "${logical_conflicts[@]}"; do
-                log_detail "  $f"
-            done
-            git_quiet merge --abort
-            indent_pop
-            return 1
-        fi
-
-        # Format-only conflicts: accept upstream content, will reformat below
-        for f in "${format_only[@]}"; do
-            git checkout --theirs "$f" 2>/dev/null
-            git add "$f"
-        done
-        git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
-            log_error "Failed to commit merge resolution"
-            git_quiet merge --abort 2>/dev/null
-            indent_pop
-            return 1
-        }
-        log_operation "Resolved ${#format_only[@]} format-only conflicts"
-    fi
-
-    # Re-initialize submodules after merge (development doesn't track them,
-    # but ci-base does via .gitmodules).  The merge may leave stale working
-    # trees; a sync+update restores the correct gitlinks and checkouts
-    # without touching the index entries that pixi needs.
-    if [ -f ".gitmodules" ]; then
-        git submodule sync --quiet 2>/dev/null
-        git submodule update --init --force 2>/dev/null
-    fi
-
-    # Reformat any new/changed upstream files.
-    # Use ruff directly — pixi run format fails before pixi-workspace is merged
-    # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
-    local format_ok=false
-    local ruff_cmd=""
-    if command -v ruff &> /dev/null; then
-        ruff_cmd="ruff"
-    elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
-        ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
-    fi
-
-    if [ -n "$ruff_cmd" ]; then
-        if $ruff_cmd format hummingbot test controllers scripts >& /dev/null; then
-            format_ok=true
+    if [ "$dev_already_merged" = "false" ]; then
+        # Merge development into base branch (skip hooks/gpg for script-internal merge)
+        if git -c commit.gpgsign=false merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
+            log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
         else
-            log_warning "ruff format failed"
-        fi
-    else
-        log_warning "ruff not found — skipping format step"
-    fi
+            # Conflicts — classify as format-only vs logical
+            local logical_conflicts=()
+            local format_only=()
 
-    if [ "$format_ok" = true ]; then
-        # Only format files actually introduced/modified by the development sync (was: untracked cruft)
-        local -a sync_py_files=()
-        while IFS= read -r f; do
-            [[ "$f" == sub-packages/* ]] && continue
-            [ -f "$f" ] && sync_py_files+=("$f")
-        done < <(git diff --name-only --diff-filter=AM "${pre_sync_sha}..HEAD" -- '*.py')
-        if [ ${#sync_py_files[@]} -gt 0 ]; then
-            # Check whether ruff actually changed any of these files
-            if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
-                git add -- "${sync_py_files[@]}"
-                git -c commit.gpgsign=false commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
-                log_operation "Formatted new upstream files"
+            while IFS= read -r file; do
+                case "$file" in
+                    # CI/test config files have logical changes — need manual review
+                    pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                        logical_conflicts+=("$file")
+                        ;;
+                    *)
+                        # All other conflicts are format-only — safe to accept upstream
+                        format_only+=("$file")
+                        ;;
+                esac
+            done < <(git diff --name-only --diff-filter=U)
+
+            if [ ${#logical_conflicts[@]} -gt 0 ]; then
+                log_error "Conflicts in logical files — manual resolution needed:"
+                for f in "${logical_conflicts[@]}"; do
+                    log_detail "  $f"
+                done
+                git_quiet merge --abort
+                indent_pop
+                return 1
+            fi
+
+            # Format-only conflicts: accept upstream content, will reformat below
+            for f in "${format_only[@]}"; do
+                git checkout --theirs "$f" 2>/dev/null
+                git add "$f"
+            done
+            git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
+                log_error "Failed to commit merge resolution"
+                git_quiet merge --abort 2>/dev/null
+                indent_pop
+                return 1
+            }
+            log_operation "Resolved ${#format_only[@]} format-only conflicts"
+        fi
+
+        # Re-initialize submodules after merge (development doesn't track them,
+        # but ci-base does via .gitmodules).  The merge may leave stale working
+        # trees; a sync+update restores the correct gitlinks and checkouts
+        # without touching the index entries that pixi needs.
+        if [ -f ".gitmodules" ]; then
+            git submodule sync --quiet 2>/dev/null
+            git submodule update --init --force 2>/dev/null
+        fi
+
+        # Reformat any new/changed upstream files.
+        # Use ruff directly — pixi run format fails before pixi-workspace is merged
+        # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
+        local format_ok=false
+        local ruff_cmd=""
+        if command -v ruff &> /dev/null; then
+            ruff_cmd="ruff"
+        elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+            ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+        fi
+
+        if [ -n "$ruff_cmd" ]; then
+            if $ruff_cmd format hummingbot test controllers scripts >& /dev/null; then
+                format_ok=true
             else
-                log_operation "No formatting changes needed"
+                log_warning "ruff format failed"
             fi
         else
-            log_operation "No new upstream Python files to format"
+            log_warning "ruff not found — skipping format step"
         fi
-    fi
 
-    # Merge _for_ci/* branches after format pass — ci-base-layer targeted fixes.
-    # Uses the same tracked_branches config under target_branches.ci-base.
+        if [ "$format_ok" = true ]; then
+            # Only format files actually introduced/modified by the development sync (was: untracked cruft)
+            local -a sync_py_files=()
+            while IFS= read -r f; do
+                [[ "$f" == sub-packages/* ]] && continue
+                [ -f "$f" ] && sync_py_files+=("$f")
+            done < <(git diff --name-only --diff-filter=AM "${pre_sync_sha}..HEAD" -- '*.py')
+            if [ ${#sync_py_files[@]} -gt 0 ]; then
+                # Check whether ruff actually changed any of these files
+                if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
+                    git add -- "${sync_py_files[@]}"
+                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
+                    log_operation "Formatted new upstream files"
+                else
+                    log_operation "No formatting changes needed"
+                fi
+            else
+                log_operation "No new upstream Python files to format"
+            fi
+        fi
+    fi  # end dev_already_merged guard
+
+    # Merge _for_ci/* branches — ci-base-layer targeted fixes.
+    # Runs unconditionally: _for_ci/* branches are OUR infrastructure additions
+    # and must merge into ci-base regardless of whether development had new commits.
+    # Uses the tracked_branches config under target_branches.ci-base.
     merge_for_ci_branches "$base_branch" || {
         log_error "_for_ci/* merge failed — rebuild aborted"
         return 1
