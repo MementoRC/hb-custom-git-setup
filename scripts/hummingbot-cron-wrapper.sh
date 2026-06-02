@@ -74,6 +74,7 @@ fi
 OVERALL_STATUS=0
 UPSTREAM_STATUS="skipped"
 TRACKING_STATUS="skipped"
+SUBMODULE_SYNC_STATUS="skipped"
 INTERFACE_STATUS="skipped"
 ERRORS=()
 
@@ -209,6 +210,36 @@ else
 fi
 
 ###############################################################################
+# Step 2.5: Sync submodule working trees to bumped gitlinks
+# ---------------------------------------------------------
+# Branch tracking only updates the parent repo's submodule POINTERS (gitlinks).
+# Submodule working trees remain at the old SHAs until explicitly updated.
+# Without this step, downstream checks (e.g. compat-check) see stale sub-package
+# content, masking the actual current state of bumped sub-packages.
+###############################################################################
+if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
+    log_section "$(colorize "$BLUE" "Step 2.5: Sync Submodule Working Trees")"
+
+    if cd "$REPO_PATH" 2>/dev/null; then
+        log_operation "Running git submodule update --recursive --force..."
+        if git submodule update --recursive --force; then
+            SUBMODULE_SYNC_STATUS="pass"
+            log_result true "Submodule working trees synced"
+        else
+            SUBMODULE_SYNC_STATUS="FAIL"
+            ERRORS+=("Submodule sync failed; subsequent checks may operate on stale content")
+            log_result false "Submodule sync failed"
+            [ $OVERALL_STATUS -eq 0 ] && OVERALL_STATUS=1
+        fi
+    else
+        SUBMODULE_SYNC_STATUS="error (cannot cd to $REPO_PATH)"
+        log_error "Cannot cd to $REPO_PATH — skipping submodule sync"
+    fi
+else
+    log_step "Submodule sync: skipped (tracking not run or failed)"
+fi
+
+###############################################################################
 # Step 3: Modularization Health Checks
 # -------------------------------------
 # Runs after bleeding-edge has the modularization pixi tasks available.
@@ -321,6 +352,14 @@ fi
 log_footer
 
 write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
+
+# Append submodule sync detail (written after write_run_summary to avoid overwrite)
+if [ "$SUBMODULE_SYNC_STATUS" != "skipped" ]; then
+    {
+        echo ""
+        echo "Submodule sync: $SUBMODULE_SYNC_STATUS"
+    } >> "$SUMMARY_FILE"
+fi
 
 # Append modularization health detail (written after write_run_summary to avoid overwrite)
 if [ "$MODULAR_STATUS" != "skipped" ]; then
