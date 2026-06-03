@@ -172,14 +172,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/bump-subpackage-pointers-2026-06-03
-        enabled: true
-        tier: infrastructure
-        parent: null
-        description: "Second submodule pointer bump 2026-06-03 — candles-feed, web-assistant, strategy-framework, rate-oracle to origin/development tips"
-        permanent: false
-        disable_when_in_development: true
-
       - name: _for_bleed/progressive-executor-trading-v2
         enabled: true
         tier: feature
