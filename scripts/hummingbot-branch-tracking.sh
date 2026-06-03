@@ -1081,6 +1081,32 @@ main() {
       fi
   fi
 
+  # Conflict-marker validation — fail loudly if unresolved markers leaked
+  # into committed source files after all merges and format/transform passes.
+  if [ "$REBUILD_MODE" = "true" ]; then
+      log_step "Conflict-marker scan"
+      local conflict_files
+      conflict_files=$(grep -rln \
+          --include='*.py' --include='*.pyx' --include='*.pxd' \
+          --include='*.toml' --include='*.yaml' --include='*.yml' \
+          --exclude-dir='.git' --exclude-dir='.pixi' --exclude-dir='build' \
+          --exclude-dir='dist' --exclude-dir='node_modules' --exclude-dir='.worktrees' \
+          '^<<<<<<< ' "$REPO_PATH" 2>/dev/null || true)
+      if [ -n "$conflict_files" ]; then
+          log_error "FATAL: Unresolved conflict markers detected — rebuild ABORTED"
+          log_error "Affected files:"
+          while IFS= read -r f; do
+              log_error "  $f"
+              grep -n '^<<<<<<< \|^=======\s*$\|^>>>>>>> ' "$f" 2>/dev/null | head -5 | while IFS= read -r marker_line; do
+                  log_detail "    $marker_line"
+              done
+          done <<< "$conflict_files"
+          log_error "Resolve markers on the source _for_bleed/* branches and re-run --rebuild"
+          exit 1
+      fi
+      log_step "Conflict-marker scan: clean"
+  fi
+
   log_step "Branch tracking completed successfully!"
 
   if [ "$REBUILD_MODE" = true ]; then
