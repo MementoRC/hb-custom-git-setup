@@ -164,14 +164,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/bump-subpackage-pointers-2026-06-02
-        enabled: true
-        tier: infrastructure
-        parent: null
-        description: "Bump rate-oracle + candles-feed + market-connector submodule pointers after modularization Step 3 fixes (PRs 22/35/63/64)"
-        permanent: false
-        disable_when_in_development: true
-
       - name: _for_bleed/progressive-executor-trading-v2
         enabled: true
         tier: feature
