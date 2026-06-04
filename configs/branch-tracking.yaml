@@ -78,6 +78,14 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/tach-modules-coarse
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "Phase 1 of tach mod integration: 15 populated modules + depends_on edges. PR #47 to ci-base. Plan in hummingbot_ai_docs/2026-06-04-tach-mod-integration-plan.md"
+        permanent: false
+        disable_when_in_development: false
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
@@ -300,6 +308,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
         parent: _for_bleed/logger-callback-refactor
+
+      - name: _for_bleed/dedupe-hummingbot-logger
+        enabled: true
+        tier: feature
+        description: "Dedupe HummingbotLogger: replaces hummingbot/logger/{__init__,logger}.py with re-export shims importing from the canonical `logger` sub-package. Fixes MementoRC/hb-logger#9 (dual-import isinstance failure). Progresses MementoRC/hb-logger#1 Phase 5 partial. Parent-chained after logger-type-cleanup so the shim cleanly overwrites prior callback/type changes; runtime behavior preserved by sub-package."
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/logger-type-cleanup
 
       - name: _for_bleed/position-exchange-executor
         enabled: true
