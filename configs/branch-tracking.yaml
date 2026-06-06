@@ -86,6 +86,14 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/refresh-pixi-lock
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "One-shot: refresh pixi.lock to match ci-base pyproject.toml after isort dep addition; pairs with custom_git_setup b8bd2c28 (--frozen cron pixi calls); delete branch after cron absorbs the merge"
+        permanent: false
+        disable_when_in_development: false
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
