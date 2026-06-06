@@ -20,7 +20,7 @@
 #                                                 of the infrastructure layer. Merged AFTER all
 #                                                 infrastructure branches are applied.
 #
-# Last reviewed: 2026-04-17
+# Last reviewed: 2026-06-05
 
 target_branches:
   ci-base:
@@ -38,7 +38,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/fix-pandas-timestamp-utc
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: zero unique content vs development after rebase; pd.Timestamp.UTC already fixed upstream via different commits. pd.Timestamp.utcnow() cleanup (3 files: markets_recorder.py, migrator.py, mock_api_order_book_data_source.py) still pending — recreate fresh branch if wanted.
         tier: bugfix
         parent: null
         description: "Replace pd.Timestamp.UTC with datetime.timezone.utc for pandas 2.x compatibility (clears PR #22 CI failures)"
@@ -78,6 +78,14 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/fix-format-task-include-isort
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "Add isort>=5.12.0 to dev deps and chain isort into pixi format task so pixi run format matches CI pre-commit hook ordering"
+        permanent: false
+        disable_when_in_development: false
+
   bleeding-edge:
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
@@ -106,14 +114,14 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_bleed/executor-mixins
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: superseded — 7 mixin files already on ci-base via progressive-executor merge
         tier: feature
         description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/add-executor-factory
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: superseded — executor_factory.py already on ci-base; parent executor-mixins also retired
         tier: feature
         description: "ExecutorFactory with decorator-based registration for all 8 executors"
         permanent: false
@@ -121,14 +129,14 @@ target_branches:
         parent: _for_bleed/executor-mixins
 
       - name: _for_bleed/add-update-executor-action
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: superseded — UpdateExecutorAction already on ci-base (executor_actions.py:44)
         tier: feature
         description: "UpdateExecutorAction framework + controller volatility dispatch for progressive executor"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/environment
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: zero unique content vs ci-base after rebase onto origin/ci-base; injective-py pip→conda migration intent unfulfilled, recreate fresh branch if still wanted
         tier: feature
         description: "Environment and dependency fixes (injective-py, pip_packages)"
         permanent: false
@@ -185,7 +193,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_bleed/web-assistant-extraction
-        enabled: false
+        enabled: false  # RETIRED 2026-06-05: obsolete — superseded by web-assistant-migration batches 1-5 (already noted OBSOLETE in earlier docs)
         tier: feature
         description: "OBSOLETE: PR 3b soft-migration approach superseded by hard migration in batches 1-5. install-subpackages addition salvaged to ci-base directly."
         permanent: false
@@ -241,7 +249,7 @@ target_branches:
 
       # Connector-utils sub-package extraction Phase 5 (single-commit corrected shim)
       - name: _for_bleed/connector-utils-split
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: superseded — connector/utils.py already replaced with sub-package shim on ci-base
         tier: feature
         description: "Phase 5 of MementoRC/hb-connector-utils#1: delegate 5 pure helpers to connector_utils sub-package via re-export + nonce-injection shim wrappers. Processors kept INLINE (not moved to core/web_assistant/). Coordinates with web-assistant migration batch-5-shim-removal. Merged LAST (after batch-5-shim-removal and async-utils-migration) because import additions are additive on the post-migration canonical state."
         permanent: false
@@ -433,7 +441,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_bleed_manual/kraken-tweaks
-        enabled: true
+        enabled: false  # RETIRED 2026-06-05: absorbed — branch content already in development (verified zero-diff)
         tier: feature
         description: "Kraken order status handling and startup cleanup"
         permanent: false

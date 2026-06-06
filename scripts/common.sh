@@ -23,7 +23,19 @@
 : "${STATUS_LOG:=$LOG_PATH/branch_status.log}"
 
 ###############################################################################
-# 2) Color & Indentation Definitions
+# 2) PATH Configuration for Cron Environments
+###############################################################################
+# Ensure conda-managed tools (pixi) are reachable under cron's minimal PATH.
+# /opt/conda/bin holds the pixi binary on this host; cron does not inherit
+# the user's interactive PATH, so prepend it explicitly. Idempotent: only
+# prepends when not already present.
+case ":${PATH}:" in
+    *:/opt/conda/bin:*) ;;
+    *) export PATH="/opt/conda/bin:${PATH}" ;;
+esac
+
+###############################################################################
+# 3) Color & Indentation Definitions
 ###############################################################################
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'

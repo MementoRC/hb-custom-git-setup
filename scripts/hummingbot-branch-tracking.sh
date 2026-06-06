@@ -256,7 +256,7 @@ sync_base_branch() {
         fi
 
         # Reformat any new/changed upstream files.
-        # Use ruff directly — pixi run format fails before pixi-workspace is merged
+        # Use ruff/isort directly — pixi run format fails before pixi-workspace is merged
         # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
         local format_ok=false
         local ruff_cmd=""
@@ -264,6 +264,12 @@ sync_base_branch() {
             ruff_cmd="ruff"
         elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
             ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+        fi
+        local isort_cmd=""
+        if command -v isort &> /dev/null; then
+            isort_cmd="isort"
+        elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
+            isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
         fi
 
         if [ -n "$ruff_cmd" ]; then
@@ -275,6 +281,9 @@ sync_base_branch() {
         else
             log_warning "ruff not found — skipping format step"
         fi
+        if [ "$format_ok" = true ] && [ -n "$isort_cmd" ]; then
+            $isort_cmd hummingbot test controllers scripts >& /dev/null || log_warning "isort failed"
+        fi
 
         if [ "$format_ok" = true ]; then
             # Only format files actually introduced/modified by the development sync (was: untracked cruft)
@@ -284,10 +293,10 @@ sync_base_branch() {
                 [ -f "$f" ] && sync_py_files+=("$f")
             done < <(git diff --name-only --diff-filter=AM "${pre_sync_sha}..HEAD" -- '*.py')
             if [ ${#sync_py_files[@]} -gt 0 ]; then
-                # Check whether ruff actually changed any of these files
+                # Check whether ruff/isort actually changed any of these files
                 if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
                     git add -- "${sync_py_files[@]}"
-                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format new upstream files" >& /dev/null
+                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format + isort new upstream files" >& /dev/null
                     log_operation "Formatted new upstream files"
                 else
                     log_operation "No formatting changes needed"
@@ -423,7 +432,14 @@ check_mergeability() {
     # the working tree.  This avoids "unable to rmdir sub-packages/*" errors
     # caused by submodule directories that exist on bleeding-edge/ci-base but
     # not on the target branch.
-    if git merge-tree --write-tree "$target" "$branch" > /dev/null 2>&1; then
+    local conflict_log="${LOG_PATH}/merge_conflicts_${branch//\//_}.txt"
+    git merge-tree --write-tree "$target" "$branch" > "$conflict_log" 2>&1
+    local merge_rc=$?
+    # Restore the index to HEAD so subsequent checkouts are not blocked by
+    # staged merge-tree entries (index-dirtying defect).
+    git read-tree HEAD
+    if [ $merge_rc -eq 0 ]; then
+        rm -f "$conflict_log"
         return 0
     else
         log_error "$branch has conflicts with $target"
@@ -709,12 +725,21 @@ sync_branch() {
                 elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
                     ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
                 fi
+                local isort_cmd=""
+                if command -v isort &> /dev/null; then
+                    isort_cmd="isort"
+                elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
+                    isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
+                fi
                 if [ -n "$ruff_cmd" ] && ! git diff --quiet; then
                     $ruff_cmd format hummingbot test controllers scripts >& /dev/null
                 fi
+                if [ -n "$isort_cmd" ]; then
+                    $isort_cmd hummingbot test controllers scripts >& /dev/null
+                fi
                 if ! git diff --quiet; then
                     git add -A
-                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format after $branch merge" >& /dev/null
+                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format + isort after $branch merge" >& /dev/null
                     log_operation "Formatted after merge"
                 fi
                 handle_new_files || {
@@ -1071,11 +1096,22 @@ main() {
       elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
           ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
       fi
+      local isort_cmd=""
+      if command -v isort &> /dev/null; then
+          isort_cmd="isort"
+      elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
+          isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
+      fi
       if [ -n "$ruff_cmd" ]; then
           $ruff_cmd format hummingbot test controllers scripts >& /dev/null
+      fi
+      if [ -n "$isort_cmd" ]; then
+          $isort_cmd hummingbot test controllers scripts >& /dev/null
+      fi
+      if [ -n "$ruff_cmd" ] || [ -n "$isort_cmd" ]; then
           if ! git diff --quiet; then
               git add -A -- . ':!sub-packages'
-              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format pass after rebuild" >& /dev/null
+              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format + isort pass after rebuild" >& /dev/null
               log_step "Applied final format pass"
           fi
       fi
