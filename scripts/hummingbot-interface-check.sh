@@ -56,7 +56,7 @@ run_python_check() {
     fi
 
     local output
-    output=$(pixi run python -c "$python_code" 2>&1)
+    output=$(pixi run --frozen python -c "$python_code" 2>&1)
     local status=$?
 
     if [ $status -ne 0 ]; then

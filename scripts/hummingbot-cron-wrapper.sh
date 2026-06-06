@@ -256,7 +256,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
 
     # Hash all .pyx + .pxd content; prefix with Python ABI tag so a Python
     # version bump invalidates the marker even when source is unchanged.
-    PYTHON_ABI_TAG=$(cd "$REPO_PATH" && pixi run python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    PYTHON_ABI_TAG=$(cd "$REPO_PATH" && pixi run --frozen python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
     PYX_FILES=$(find "$REPO_PATH/hummingbot" \( -name "*.pyx" -o -name "*.pxd" \) 2>/dev/null | sort)
     if [ -z "$PYX_FILES" ]; then
         CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:no-pyx"
@@ -277,7 +277,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
             ERRORS+=("Cython build: cd to REPO_PATH failed")
             log_result false "Cython build: cd to $REPO_PATH failed"
             [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
-        elif pixi run build >> "$CRON_LOG" 2>&1; then
+        elif pixi run --frozen build >> "$CRON_LOG" 2>&1; then
             echo "$CURRENT_PYX_SHA" > "$CYTHON_SHA_MARKER"
             CYTHON_BUILD_STATUS="pass"
             log_result true "Cython build succeeded"
@@ -311,7 +311,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
     if cd "$REPO_PATH" 2>/dev/null; then
         # compat-check: now covers all 14 sub-packages
         log_operation "Running compat-check (all sub-packages)..."
-        if pixi run compat-check; then
+        if pixi run --frozen compat-check; then
             COMPAT_RESULT="pass"
             log_result true "compat-check passed"
         else
@@ -322,7 +322,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
 
         # lint-boundaries: tach boundary check (stub config initially)
         log_operation "Running lint-boundaries (tach)..."
-        if pixi run lint-boundaries; then
+        if pixi run --frozen lint-boundaries; then
             BOUNDARY_RESULT="pass"
             log_result true "lint-boundaries passed"
         else
@@ -336,7 +336,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
         DEP_GRAPH_OUT="${CRON_LOG_DIR}/dep_graph_latest.json"
         DEP_GRAPH_PREV="${CRON_LOG_DIR}/dep_graph_prev.json"
         [ -f "$DEP_GRAPH_OUT" ] && mv "$DEP_GRAPH_OUT" "$DEP_GRAPH_PREV"
-        if pixi run dep-graph > "$DEP_GRAPH_OUT" 2>&1; then
+        if pixi run --frozen dep-graph > "$DEP_GRAPH_OUT" 2>&1; then
             if [ -f "$DEP_GRAPH_PREV" ]; then
                 DEP_GRAPH_DIFF=$(diff -q "$DEP_GRAPH_PREV" "$DEP_GRAPH_OUT" 2>&1 || echo "changed")
             else
