@@ -312,22 +312,14 @@ cd "$REPO_PATH" || {
 ###############################################################################
 # Build Cython Extensions
 ###############################################################################
-# Build before probing imports to ensure .so artifacts match current source.
-# A stale or wrong-ABI .so (e.g. cpython-313 in a 3.12 env) causes false
-# BREAKING reports for modules that import via limit_order.so transitively.
-# If build fails, log it but continue — the probes will surface what they find.
+# Build is handled by cron wrapper Step 2.75 before this script is invoked.
+# When run standalone (outside cron), callers should run `pixi run build`
+# manually before invoking this script, or the probes may reflect stale .so.
 log_section "$(colorize "$BLUE" "Building Cython extensions")"
-log_step "Running: pixi run build"
-build_output=$(pixi run build 2>&1)
-build_status=$?
-if [ $build_status -ne 0 ]; then
-    log_warning "Build exited with status $build_status — import probes may reflect stale .so"
-    if [ "$VERBOSE" = true ]; then
-        log_detail "Build output: $build_output" >&2
-    fi
-else
-    log_step "Build: OK"
-fi
+# Build skipped: handled by cron wrapper Step 2.75
+echo "[interface-check] Build skipped: handled by cron wrapper Step 2.75"
+build_output=""
+build_status=0
 
 # pixi run automatically activates the hummingbot environment
 # Run all interface checks

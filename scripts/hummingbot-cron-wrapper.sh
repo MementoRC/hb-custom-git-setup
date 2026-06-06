@@ -240,6 +240,59 @@ else
 fi
 
 ###############################################################################
+# Step 2.75: Cython Build
+# -----------------------
+# Build in-place .so extensions so interface check (Step 4) and future
+# test-selection gate can import Cython-backed modules. SHA marker over
+# .pyx + .pxd content plus the active Python ABI tag — skips rebuild when
+# nothing has changed since the last successful build. Fatal failure mode:
+# a build error aborts the rebuild instead of silently leaving stale .so.
+###############################################################################
+CYTHON_BUILD_STATUS="skipped"
+CYTHON_SHA_MARKER="${CRON_LOG_DIR}/cython_build_sha.txt"
+
+if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
+    log_section "$(colorize "$BLUE" "Step 2.75: Cython Build")"
+
+    # Hash all .pyx + .pxd content; prefix with Python ABI tag so a Python
+    # version bump invalidates the marker even when source is unchanged.
+    PYTHON_ABI_TAG=$(cd "$REPO_PATH" && pixi run python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    PYX_FILES=$(find "$REPO_PATH/hummingbot" \( -name "*.pyx" -o -name "*.pxd" \) 2>/dev/null | sort)
+    if [ -z "$PYX_FILES" ]; then
+        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:no-pyx"
+    else
+        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:$(echo "$PYX_FILES" | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+    fi
+    STORED_PYX_SHA=""
+    [ -f "$CYTHON_SHA_MARKER" ] && STORED_PYX_SHA=$(cat "$CYTHON_SHA_MARKER")
+
+    if [ -n "$STORED_PYX_SHA" ] && [ "$CURRENT_PYX_SHA" = "$STORED_PYX_SHA" ]; then
+        CYTHON_BUILD_STATUS="skipped (no .pyx/.pxd changes)"
+        log_step "Cython build: skipped (sources unchanged, ABI tag $PYTHON_ABI_TAG)"
+        log_result true "Cython build unchanged"
+    else
+        log_operation "Running: pixi run build (ABI tag $PYTHON_ABI_TAG)"
+        if ! cd "$REPO_PATH"; then
+            CYTHON_BUILD_STATUS="FAIL"
+            ERRORS+=("Cython build: cd to REPO_PATH failed")
+            log_result false "Cython build: cd to $REPO_PATH failed"
+            [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
+        elif pixi run build >> "$CRON_LOG" 2>&1; then
+            echo "$CURRENT_PYX_SHA" > "$CYTHON_SHA_MARKER"
+            CYTHON_BUILD_STATUS="pass"
+            log_result true "Cython build succeeded"
+        else
+            CYTHON_BUILD_STATUS="FAIL"
+            ERRORS+=("Cython build failed - interface check will probe stale .so")
+            log_result false "Cython build failed (see log)"
+            [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
+        fi
+    fi
+else
+    log_step "Cython build: skipped (tracking not run or failed)"
+fi
+
+###############################################################################
 # Step 3: Modularization Health Checks
 # -------------------------------------
 # Runs after bleeding-edge has the modularization pixi tasks available.
@@ -358,6 +411,14 @@ if [ "$SUBMODULE_SYNC_STATUS" != "skipped" ]; then
     {
         echo ""
         echo "Submodule sync: $SUBMODULE_SYNC_STATUS"
+    } >> "$SUMMARY_FILE"
+fi
+
+# Append Cython build detail
+if [ "$CYTHON_BUILD_STATUS" != "skipped" ]; then
+    {
+        echo ""
+        echo "Cython build: $CYTHON_BUILD_STATUS"
     } >> "$SUMMARY_FILE"
 fi
 
