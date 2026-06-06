@@ -433,6 +433,13 @@ target_branches:
         # _for_bleed/hb-event-bus). Re-enable once event-bus work is merged and the bridge
         # code is settled.
 
+      - name: _for_bleed/connector-data-types-extraction-step-1
+        enabled: true
+        tier: feature
+        description: "Extract connector data types (common, cancellation_result, funding_info, trade_fee, in_flight_order, LimitOrderStatus) into hb-data-type-primitives sub-package with hb_compat shims. PR #4 in hb-data-type-primitives merged; this branch is the consumer-side step-1 (shims active). limit_order intentionally not shimmed (.pyx serves it)."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_bleed/remove-conda-setup
         enabled: true
         tier: feature
