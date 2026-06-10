@@ -20,7 +20,7 @@
 #                                                 of the infrastructure layer. Merged AFTER all
 #                                                 infrastructure branches are applied.
 #
-# Last reviewed: 2026-06-05
+# Last reviewed: 2026-06-09
 
 target_branches:
   ci-base:
@@ -45,6 +45,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-selector-error-message-conda
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "Replace pip-install-pyyaml hint in select_tests.py with conda/pixi-flavored hint. Defense in depth after wrapper fix that routes python through pixi env."
+        permanent: false
+        disable_when_in_development: false
+
       - name: _for_ci/fix-singleton-pollution-in-command-tests
         enabled: false
         # TODO: re-enable once the _for_ci/fix-singleton-pollution-in-command-tests branch is pushed to origin
@@ -62,6 +70,32 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-trading-pair-fetcher-async-utils-import
+        enabled: true
+        tier: bugfix
+        parent: null
+        description: "Fix missed async_utils migration: trading_pair_fetcher.py imports safe_ensure_future from sub-package (async_utils.core) instead of deleted local .async_utils. Unblocks 10 always_on test failures (ModuleNotFoundError on HummingbotApplication import)."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-network-mocking-web-assistant-import
+        # REROUTED 2026-06-09: 126 connector import sites is feature-tier scope; content moved to _for_bleed/web-assistant-migration-batch-5-connector-stragglers under bleeding-edge tier. See also: orthogonality restoration (_for_ci/* must be narrow fixes, not sub-package migrations).
+        enabled: false
+        tier: bugfix
+        parent: null
+        description: "Fix 126 missed web-assistant migration imports in hummingbot/connector/ (exchange + derivative connectors, network_mocking_assistant, exchange_py_base, utils). Unblocks upstream gate (caught cron sync_20260608_115534)."
+        permanent: false
+        disable_when_in_development: true
+        last_reviewed: "2026-06-09"
+
+      - name: _for_ci/add-diff-driven-test-selection
+        enabled: true
+        tier: bugfix
+        parent: null
+        description: "Vendor diff-driven test selector into .github/test-selection/ so remote CI (quick-check.yml) and local iteration (pixi run test-changed) share a single source with the cron pipeline. Phase 5A."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_ci/modularization-docs
         enabled: true
         tier: infrastructure
@@ -71,10 +105,10 @@ target_branches:
         disable_when_in_development: false
 
       - name: _for_ci/tach-modules-coarse
-        enabled: true
+        enabled: false
         tier: infrastructure
         parent: null
-        description: "Phase 1 of tach mod integration: 15 populated modules + depends_on edges. PR #47 to ci-base. Plan in hummingbot_ai_docs/2026-06-04-tach-mod-integration-plan.md"
+        description: "Phase 1 of tach mod integration: 15 populated modules + depends_on edges. PR #47 to ci-base. Plan in hummingbot_ai_docs/2026-06-04-tach-mod-integration-plan.md — SUPERSEDED 2026-06-08 by _for_bleed/import-linter-adoption (tach abandoned; see audit doc). Keep disabled."
         permanent: false
         disable_when_in_development: false
 
@@ -86,7 +120,23 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/ci-base-baseline-fixes
+        enabled: true
+        tier: infrastructure
+        parent: null
+        last_reviewed: "2026-06-09"
+        # Active baseline-fix work for ci-base. Gating dependency for
+        # _for_bleed/connector-data-types-extraction-step-1 (waiting on these fixes
+        # to land before its 5 commits can rebase cleanly onto bleeding-edge).
+        # Registered 2026-06-09 as part of ci-base orthogonality restoration.
+        description: "Active baseline-fix accumulator for ci-base: miscellaneous narrow fixes that must land on ci-base before dependent bleeding-edge branches can rebase cleanly"
+        permanent: false
+        disable_when_in_development: false
+
   bleeding-edge:
+    # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
+    # Listed below in tier order (infrastructure first, feature second).
+    # See infrastructure-tier branches here before feature-tier branches below.
     # Base branch: formatted superset of development.
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
     # Synced with development + pixi run format + _for_ci/* merges before each rebuild.
@@ -104,6 +154,14 @@ target_branches:
         tier: infrastructure
         description: "Python 3.12 runtime: stdlib shims, dependency pins, Cython directives — fixes pyupgrade/refactor cannot produce"
         permanent: true
+        disable_when_in_development: false
+
+      - name: _for_bleed/import-linter-adoption
+        enabled: true
+        tier: infrastructure
+        parent: null
+        description: "Replace tach with import-linter for sub-package boundary enforcement. 13 contracts enforce hb_compat/ rule across 14 sub-packages. Adds lint-boundaries pixi task + import-linter dep. Verified: lint-imports → 13 kept, 0 broken, 332ms. Commit 7f61baf1."
+        permanent: false
         disable_when_in_development: false
 
       - name: _for_bleed/test-coverage
@@ -199,51 +257,11 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      # Batch 1 of web-assistant consumer migration (hummingbot.core.web_assistant/api_throttler → web_assistant)
-      - name: _for_bleed/web-assistant-migration-batch-1-connector-exchange
-        enabled: true
-        tier: feature
-        description: "Batch 1 of web-assistant consumer migration: hummingbot/connector/exchange/ (~89 files)"
-        permanent: false
-        disable_when_in_development: true
-
-      # Batch 2 of web-assistant consumer migration (hummingbot.core.web_assistant/api_throttler → web_assistant)
-      - name: _for_bleed/web-assistant-migration-batch-2-connector-derivative
-        enabled: true
-        tier: feature
-        description: "Batch 2 of web-assistant consumer migration: hummingbot/connector/derivative/ (~81 files)"
-        permanent: false
-        disable_when_in_development: true
-
-      # Batch 3 of web-assistant consumer migration (hummingbot.core.web_assistant/api_throttler → web_assistant)
-      - name: _for_bleed/web-assistant-migration-batch-3-core-infra
-        enabled: true
-        tier: feature
-        description: "Batch 3 of web-assistant consumer migration: hummingbot/core/ + hummingbot/data_feed/ + hummingbot/connector/utilities/ (~28 files)"
-        permanent: false
-        disable_when_in_development: true
-
-      # Batch 4 of web-assistant consumer migration (hummingbot.core.web_assistant/api_throttler → web_assistant)
-      - name: _for_bleed/web-assistant-migration-batch-4-tests
-        enabled: true
-        tier: feature
-        description: "Batch 4 of web-assistant consumer migration: test/ tree (~85 files)"
-        permanent: false
-        disable_when_in_development: true
-
-      # Batch 5 of web-assistant consumer migration: final stragglers + shim removal
-      - name: _for_bleed/web-assistant-migration-batch-5-shim-removal
-        enabled: true
-        tier: feature
-        description: "Batch 5 of web-assistant consumer migration: migrate 3 stragglers + remove legacy shim modules"
-        permanent: false
-        disable_when_in_development: true
-
       # Async-utils sub-package extraction
       - name: _for_bleed/async-utils-migration
-        enabled: true
+        enabled: false  # SUPERSEDED 2026-06-09: content already merged into ci-base via _for_ci/fix-trading-pair-fetcher-async-utils-import (132 consumer files migrated, source hummingbot/core/utils/async_utils.py deleted). Branch is now a no-op merge.
         tier: feature
-        description: "Async-utils sub-package extraction: 4-batch consumer migration + Phase 4 source deletion"
+        description: "Async-utils sub-package extraction: 4-batch consumer migration + Phase 4 source deletion — SUPERSEDED 2026-06-09: content already merged into ci-base via _for_ci/fix-trading-pair-fetcher-async-utils-import (132 consumer files migrated, source hummingbot/core/utils/async_utils.py deleted). Branch is now a no-op merge."
         permanent: false
         disable_when_in_development: true
 
@@ -331,16 +349,13 @@ target_branches:
       # NOTE: All 10 parity branches have been superseded by _for_bleed/hb-event-bus (consolidation).
 
       - name: _for_bleed/hb-event-bus
-        enabled: false
+        enabled: true
         tier: feature
         description: "Consolidated event-bus bridge + conftest + 10 parity test suites; bumps event-bus submodule. Supersedes the 10 hb-event-bus-parity-* branches (now disabled)."
         permanent: false
         disable_when_in_development: true
-        # Disabled 2026-06-01: blocked on active hb-event-bus sub-package extraction work
-        # in /home/memento/PycharmProjects/Hummingbot/worktrees/hb-event-bus-phase-c.
-        # The branch is checked out in that dev worktree, preventing the rebuild script
-        # from creating its own worktree for merge fallback. Re-enable when the
-        # sub-package extraction is settled and the dev worktree is removed.
+        last_reviewed: "2026-06-09"
+        # re-enabled 2026-06-09 — parallel infrastructure work blocker cleared; branch passes CI on origin (411bae0527). DO NOT refresh against ci-base before rebuild — ci-base currently failing CI.
 
       - name: _for_bleed/hb-event-bus-parity-orderbook
         enabled: false
@@ -433,8 +448,17 @@ target_branches:
         # _for_bleed/hb-event-bus). Re-enable once event-bus work is merged and the bridge
         # code is settled.
 
+        # Temporarily disabled 2026-06-09 — branch tip b0cc5b17 has ancestor f865e82a65
+        # (a discarded SHA from ci-base orthogonality restoration). Cannot be mechanically
+        # rebased onto new clean ci-base (78e11a9bef): the first commit
+        # "786962f65 feat(extraction): regenerate connector-data-types-step-1 from ci-base"
+        # is a script-generated codemod pass and conflicts with 55 connector files.
+        # Re-enable after: (1) _for_ci/ci-base-baseline-fixes merges into ci-base via rebuild,
+        # (2) manually regenerate step-1 in worktree against the new ci-base tip.
+        # Original tip preserved at tag step1-pre-rebase-2026-06-09 / branch _archive/...
       - name: _for_bleed/connector-data-types-extraction-step-1
-        enabled: true
+        enabled: false
+        last_reviewed: "2026-06-09"
         tier: feature
         description: "Extract connector data types (common, cancellation_result, funding_info, trade_fee, in_flight_order, LimitOrderStatus) into hb-data-type-primitives sub-package with hb_compat shims. PR #4 in hb-data-type-primitives merged; this branch is the consumer-side step-1 (shims active). limit_order intentionally not shimmed (.pyx serves it)."
         permanent: false
