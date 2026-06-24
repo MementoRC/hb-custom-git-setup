@@ -27,16 +27,137 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 ###############################################################################
 # Git State Management
 ###############################################################################
+
+###############################################################################
+# Denylist constants for ci-base artifact guard
+# Paths / patterns that must NEVER appear in a ci-base auto-commit.
+# Any match causes hard abort rather than silent inclusion.
+###############################################################################
+readonly CI_BASE_DENYLIST_PATHS=(
+    ".gitmodules"
+    "sub-packages/"
+    "ci/check_subpackage_compat.py"
+    "tach.toml"
+)
+readonly CI_BASE_DENYLIST_PYPROJECT_PATTERNS=(
+    "install-subpackages"
+    "\[tool\.hummingbot\.supersedes\]"
+    "compat-"
+    "submodule-update"
+    # known-first-party sub-package namespaces (add as sub-packages grow)
+    "hb_async_utils"
+    "hb_candles_feed"
+    "hb_connector_utils"
+    "hb_data_type_primitives"
+    "hb_event_bus"
+    "hb_liquidations_feed"
+    "hb_logger"
+    "hb_market_connector"
+    "hb_market_data"
+    "hb_market_simulator"
+    "hb_rate_oracle"
+    "hb_remote_iface"
+    "hb_strategy_framework"
+    "hb_web_assistant"
+)
+
+# check_ci_base_denylist <file_list_newline_separated>
+# Returns 1 and prints offending paths if any denylist hit found.
+check_ci_base_denylist() {
+    local files="$1"
+    local violations=()
+
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        # Path-based denylist
+        for denied in "${CI_BASE_DENYLIST_PATHS[@]}"; do
+            if [[ "$f" == "$denied" ]] || [[ "$f" == "${denied}"* ]]; then
+                violations+=("PATH: $f (matches denylist entry '$denied')")
+            fi
+        done
+        # pyproject.toml content check
+        if [[ "$f" == "pyproject.toml" ]] && [ -f "pyproject.toml" ]; then
+            for pattern in "${CI_BASE_DENYLIST_PYPROJECT_PATTERNS[@]}"; do
+                if grep -qE "$pattern" pyproject.toml 2>/dev/null; then
+                    violations+=("CONTENT: pyproject.toml contains banned pattern '$pattern'")
+                fi
+            done
+        fi
+    done <<< "$files"
+
+    if [ ${#violations[@]} -gt 0 ]; then
+        log_error "FATAL: ci-base artifact denylist VIOLATED — aborting auto-commit"
+        for v in "${violations[@]}"; do
+            log_error "  $v"
+        done
+        log_error "Resolve: the offending content must be removed from ci-base or moved to modular."
+        return 1
+    fi
+    return 0
+}
+
 handle_new_files() {
     local untracked
     # Exclude sub-packages/ (submodules managed by own branch), tool configs (.serena/, .mcp.json), and worktrees
     untracked=$(git ls-files --others --exclude-standard | grep -Ev '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)')
     if [ -n "$untracked" ]; then
+        # GUARDRAIL: refuse to auto-commit any file matching the ci-base denylist.
+        # This replaces the previous blind add that injected executor cruft (36e83809c).
+        if [ "$REBUILD_MODE" = "true" ] || [ "$(git rev-parse --abbrev-ref HEAD)" = "ci-base" ]; then
+            check_ci_base_denylist "$untracked" || return 1
+        fi
         log_operation "Adding new files..."
         git ls-files --others --exclude-standard -z | grep -zEv '^(sub-packages/|\.serena/|\.mcp\.json|\.worktrees/)' | xargs -0 -r git add
         # Skip hooks — these are auto-added files from merges, not user code
-        git -c commit.gpgsign=false commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
+        git commit --no-verify -m "Auto-add new files" >& /dev/null || return 1
     fi
+    return 0
+}
+
+###############################################################################
+# Post-Build ci-base Purity Assertion (--rebuild only)
+# -------------------------------------------------------
+# Verifies ZERO sub-package artifacts survived the seed-based ci-base build.
+# Abort loudly rather than propagate a contaminated branch to origin.
+# Requires CI_BASE_DENYLIST_PYPROJECT_PATTERNS from Change 2.
+###############################################################################
+assert_ci_base_purity() {
+    local violations=()
+
+    # 1. No .gitmodules
+    if [ -f ".gitmodules" ]; then
+        violations+=("FILE: .gitmodules present (sub-package artifact)")
+    fi
+
+    # 2. No sub-packages/ gitlinks in index
+    local subpkg_entries
+    subpkg_entries=$(git ls-files --stage | awk '$1 == "160000"' | grep 'sub-packages/' || true)
+    if [ -n "$subpkg_entries" ]; then
+        violations+=("GITLINKS: sub-packages/ submodule entries in index:")
+        while IFS= read -r entry; do
+            violations+=("  $entry")
+        done <<< "$subpkg_entries"
+    fi
+
+    # 3. No banned patterns in pyproject.toml
+    if [ -f "pyproject.toml" ]; then
+        for pattern in "${CI_BASE_DENYLIST_PYPROJECT_PATTERNS[@]}"; do
+            if grep -qE "$pattern" pyproject.toml 2>/dev/null; then
+                violations+=("CONTENT: pyproject.toml contains banned pattern '$pattern'")
+            fi
+        done
+    fi
+
+    if [ ${#violations[@]} -gt 0 ]; then
+        log_error "FATAL: ci-base post-build purity assertion FAILED — sub-package artifacts detected:"
+        for v in "${violations[@]}"; do
+            log_error "  $v"
+        done
+        log_error "DO NOT push ci-base. Diagnose the seed merge or _for_ci conflict resolution."
+        return 1
+    fi
+
+    log_result true "ci-base purity assertion: CLEAN (no sub-package artifacts)"
     return 0
 }
 
@@ -131,6 +252,50 @@ run_py312_transforms_for_changed() {
         fi
     fi
 
+    # Pass 1.5: StrEnum import fixup — refactor-py312 converts `class Foo(str, Enum)`
+    # to `class Foo(StrEnum)` but does NOT add `from enum import StrEnum`; ruff's
+    # subsequent --unsafe-fixes then strips the now-unused `from enum import Enum`,
+    # leaving StrEnum undefined (F821).  This pass injects the missing import before
+    # ruff can remove anything.
+    python3 - "$@" << 'PYEOF'
+import re
+import sys
+
+for path in sys.argv[1:]:
+    try:
+        text = open(path).read()
+    except OSError:
+        continue
+    # Check if StrEnum is used as a base class but not yet imported.
+    if not re.search(r'\bStrEnum\b', text):
+        continue
+    if re.search(r'from\s+enum\s+import\s+[^\n]*\bStrEnum\b', text):
+        continue
+    # File needs a StrEnum import.  Try to reuse an existing `from enum import`
+    # line; otherwise insert a fresh import after the last stdlib/future import.
+    if re.search(r'from\s+enum\s+import\s+', text):
+        # Add StrEnum to the existing enum import line.
+        text = re.sub(
+            r'(from\s+enum\s+import\s+)([^\n]+)',
+            lambda m: m.group(1) + 'StrEnum, ' + m.group(2)
+            if not m.group(2).startswith('StrEnum')
+            else m.group(0),
+            text,
+            count=1,
+        )
+    else:
+        # Insert `from enum import StrEnum` after the last `import <stdlib>` line
+        # at the top-level (before the first non-import, non-blank line).
+        lines = text.splitlines(keepends=True)
+        insert_at = 0
+        for i, line in enumerate(lines):
+            if re.match(r'^(?:import |from \S+ import )', line):
+                insert_at = i + 1
+        lines.insert(insert_at, 'from enum import StrEnum\n')
+        text = ''.join(lines)
+    open(path, 'w').write(text)
+PYEOF
+
     # Pass 2: auto-fix unused imports (best-effort; non-fatal).
     if [ -n "$ruff_cmd" ]; then
         "$ruff_cmd" check --fix --unsafe-fixes "$@" >& /dev/null || true
@@ -144,7 +309,7 @@ run_py312_transforms_for_changed() {
     # Stage and commit if anything changed.
     git add -- "$@"
     if ! git diff --cached --quiet; then
-        git -c commit.gpgsign=false commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
+        git commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
             || { log_error "Failed to commit py312 transform changes"; return 1; }
         log_operation "Committed py312 post-merge transform changes"
     else
@@ -152,6 +317,95 @@ run_py312_transforms_for_changed() {
     fi
 
     log_result true "py312 post-merge transform pass complete"
+    return 0
+}
+
+###############################################################################
+# Build ci-base from SEED (--rebuild only)
+# -----------------------------------------
+# Starts ci-base from the ci-base-seed-v1 tag (a fixed, GPG-signed snapshot
+# that embeds the pixi-ci-migration + conda-removal + pytest-asyncio foundation),
+# then merges origin/development on top.
+#
+# NEVER called in incremental cron mode (REBUILD_MODE != "true").
+# In cron mode, sync_base_branch resets to origin/ci-base and patches new
+# development commits — correct behaviour once a clean ci-base is in place.
+###############################################################################
+build_ci_base_from_seed() {
+    local base_branch="$1"
+
+    # Prerequisite: seed tag must exist (fetch tags from origin first)
+    git fetch origin --tags >/dev/null 2>&1 || true
+    local seed_tag="ci-base-seed-v1"
+    local seed_sha
+    seed_sha=$(git rev-parse --verify "refs/tags/$seed_tag" 2>/dev/null) || {
+        log_error "FATAL: tag $seed_tag not found — create it first (see ci-base-clean-rebuild-plan.md Prerequisites)"
+        return 1
+    }
+    log_operation "SEED anchor: $seed_tag @ $seed_sha"
+
+    # Hard-reset ci-base to seed, discarding any prior state
+    git fetch origin "$DEVELOPMENT_BRANCH" >/dev/null 2>&1
+    git checkout "$base_branch" >& /dev/null || {
+        # Branch may not exist yet (first run); create it
+        git checkout -b "$base_branch" "$seed_sha" >& /dev/null || {
+            log_error "Cannot create $base_branch from $seed_tag"
+            return 1
+        }
+    }
+    git reset --hard "$seed_sha" >/dev/null || {
+        log_error "Failed to reset $base_branch to $seed_tag"
+        return 1
+    }
+    log_operation "Reset $base_branch to $seed_tag"
+
+    # Capture pre-merge SHA for scoped format/transform pass
+    local pre_sync_sha
+    pre_sync_sha=$(git rev-parse HEAD)
+
+    # Merge development on top of SEED
+    if git merge --no-verify "origin/$DEVELOPMENT_BRANCH" \
+           -m "Sync $base_branch with $DEVELOPMENT_BRANCH (seed-based rebuild)" >& /dev/null; then
+        log_operation "Merged origin/$DEVELOPMENT_BRANCH cleanly onto $seed_tag"
+    else
+        # Conflict classification: same logic as sync_base_branch
+        local logical_conflicts=() format_only=()
+        while IFS= read -r file; do
+            case "$file" in
+                pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                    logical_conflicts+=("$file") ;;
+                *) format_only+=("$file") ;;
+            esac
+        done < <(git diff --name-only --diff-filter=U)
+
+        if [ ${#logical_conflicts[@]} -gt 0 ]; then
+            log_error "Logical conflicts merging development onto SEED — manual resolution needed:"
+            for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+            git merge --abort >& /dev/null
+            return 1
+        fi
+        for f in "${format_only[@]}"; do
+            git checkout --theirs "$f" 2>/dev/null
+            git add "$f"
+        done
+        git commit --no-verify --no-edit >& /dev/null || {
+            log_error "Failed to commit format-only conflict resolution"
+            git merge --abort 2>/dev/null
+            return 1
+        }
+        log_operation "Merged development (${#format_only[@]} format-only conflicts resolved)"
+    fi
+
+    # Submodule sync is NOT needed here: ci-base must have ZERO sub-package artifacts.
+    # If .gitmodules appears in the working tree after this merge, the post-build
+    # assertion (assert_ci_base_purity) will catch it and abort.
+
+    # Return pre_sync_sha to caller via a global (NOT stdout): this function emits
+    # log_* output on stdout, so echoing the SHA here would let the caller's command
+    # substitution capture the log lines too, producing a corrupt revision like
+    # "SEED anchor: ...\nReset ...\n<sha>" and a 'fatal: bad revision' in the scoped
+    # py312 diff. A global decouples the return value from the log stream.
+    SEED_PRE_SYNC_SHA="$pre_sync_sha"
     return 0
 }
 
@@ -187,125 +441,144 @@ sync_base_branch() {
         return 1
     fi
 
-    # Check if development has new commits
-    local dev_already_merged=false
-    if git merge-base --is-ancestor "$DEVELOPMENT_BRANCH" "$base_branch" 2>/dev/null; then
-        log_operation "Already up to date with $DEVELOPMENT_BRANCH"
-        dev_already_merged=true
-    fi
-
-    # Capture HEAD before the sync merge so the format pass can scope itself to
-    # only files actually introduced or modified by this merge (not pre-existing
-    # working-tree content).
     local pre_sync_sha
-    pre_sync_sha=$(git rev-parse HEAD)
 
-    if [ "$dev_already_merged" = "false" ]; then
-        # Merge development into base branch (skip hooks/gpg for script-internal merge)
-        if git -c commit.gpgsign=false merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
-            log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
-        else
-            # Conflicts — classify as format-only vs logical
-            local logical_conflicts=()
-            local format_only=()
+    if [ "$REBUILD_MODE" = "true" ]; then
+        # SEED-based rebuild: start from fixed anchor, merge development.
+        # build_ci_base_from_seed returns the pre-merge SHA via the SEED_PRE_SYNC_SHA
+        # global (not stdout) so its log output cannot corrupt the captured value.
+        build_ci_base_from_seed "$base_branch" || return 1
+        pre_sync_sha="$SEED_PRE_SYNC_SHA"
+    else
+        # Incremental cron: reset to origin tip, patch new development commits
+        # (existing reset + dev_already_merged + format block — unchanged)
 
-            while IFS= read -r file; do
-                case "$file" in
-                    # CI/test config files have logical changes — need manual review
-                    pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
-                        logical_conflicts+=("$file")
-                        ;;
-                    *)
-                        # All other conflicts are format-only — safe to accept upstream
-                        format_only+=("$file")
-                        ;;
-                esac
-            done < <(git diff --name-only --diff-filter=U)
-
-            if [ ${#logical_conflicts[@]} -gt 0 ]; then
-                log_error "Conflicts in logical files — manual resolution needed:"
-                for f in "${logical_conflicts[@]}"; do
-                    log_detail "  $f"
-                done
-                git_quiet merge --abort
-                indent_pop
-                return 1
-            fi
-
-            # Format-only conflicts: accept upstream content, will reformat below
-            for f in "${format_only[@]}"; do
-                git checkout --theirs "$f" 2>/dev/null
-                git add "$f"
-            done
-            git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
-                log_error "Failed to commit merge resolution"
-                git_quiet merge --abort 2>/dev/null
-                indent_pop
+        # Reset local base_branch to origin to prevent stale-local-ref false positives.
+        # If a prior rebuild advanced local ci-base without pushing, the is-ancestor
+        # check on development would skip the merge and the bug perpetuates.
+        if git ls-remote --exit-code origin "refs/heads/$base_branch" >/dev/null 2>&1; then
+            git fetch origin "$base_branch" >/dev/null 2>&1 || true
+            git reset --hard "origin/$base_branch" >/dev/null 2>&1 || {
+                log_error "Failed to reset $base_branch to origin/$base_branch"
                 return 1
             }
-            log_operation "Resolved ${#format_only[@]} format-only conflicts"
+            log_operation "Reset $base_branch to origin/$base_branch tip"
         fi
 
-        # Re-initialize submodules after merge (development doesn't track them,
-        # but ci-base does via .gitmodules).  The merge may leave stale working
-        # trees; a sync+update restores the correct gitlinks and checkouts
-        # without touching the index entries that pixi needs.
-        if [ -f ".gitmodules" ]; then
-            git submodule sync --quiet 2>/dev/null
-            git submodule update --init --force 2>/dev/null
+        # Check if development has new commits
+        local dev_already_merged=false
+        if git merge-base --is-ancestor "$DEVELOPMENT_BRANCH" "$base_branch" 2>/dev/null; then
+            log_operation "Already up to date with $DEVELOPMENT_BRANCH"
+            dev_already_merged=true
         fi
 
-        # Reformat any new/changed upstream files.
-        # Use ruff/isort directly — pixi run format fails before pixi-workspace is merged
-        # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
-        local format_ok=false
-        local ruff_cmd=""
-        if command -v ruff &> /dev/null; then
-            ruff_cmd="ruff"
-        elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
-            ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
-        fi
-        local isort_cmd=""
-        if command -v isort &> /dev/null; then
-            isort_cmd="isort"
-        elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
-            isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
-        fi
+        # Capture HEAD before the sync merge so the format pass can scope itself to
+        # only files actually introduced or modified by this merge (not pre-existing
+        # working-tree content).
+        pre_sync_sha=$(git rev-parse HEAD)
 
-        if [ -n "$ruff_cmd" ]; then
-            if $ruff_cmd format hummingbot test controllers scripts >& /dev/null; then
-                format_ok=true
+        if [ "$dev_already_merged" = "false" ]; then
+            # Merge development into base branch (skip pre-commit hooks for script-internal merge; gpg-signing handled by agent)
+            if git merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
+                log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
             else
-                log_warning "ruff format failed"
-            fi
-        else
-            log_warning "ruff not found — skipping format step"
-        fi
-        if [ "$format_ok" = true ] && [ -n "$isort_cmd" ]; then
-            $isort_cmd hummingbot test controllers scripts >& /dev/null || log_warning "isort failed"
-        fi
+                # Conflicts — classify as format-only vs logical
+                local logical_conflicts=()
+                local format_only=()
 
-        if [ "$format_ok" = true ]; then
-            # Only format files actually introduced/modified by the development sync (was: untracked cruft)
-            local -a sync_py_files=()
-            while IFS= read -r f; do
-                [[ "$f" == sub-packages/* ]] && continue
-                [ -f "$f" ] && sync_py_files+=("$f")
-            done < <(git diff --name-only --diff-filter=AM "${pre_sync_sha}..HEAD" -- '*.py')
-            if [ ${#sync_py_files[@]} -gt 0 ]; then
-                # Check whether ruff/isort actually changed any of these files
-                if ! git diff --quiet -- "${sync_py_files[@]}" 2>/dev/null; then
-                    git add -- "${sync_py_files[@]}"
-                    git -c commit.gpgsign=false commit --no-verify -m "style: ruff format + isort new upstream files" >& /dev/null
-                    log_operation "Formatted new upstream files"
+                while IFS= read -r file; do
+                    case "$file" in
+                        # CI/test config files have logical changes — need manual review
+                        pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                            logical_conflicts+=("$file")
+                            ;;
+                        *)
+                            # All other conflicts are format-only — safe to accept upstream
+                            format_only+=("$file")
+                            ;;
+                    esac
+                done < <(git diff --name-only --diff-filter=U)
+
+                if [ ${#logical_conflicts[@]} -gt 0 ]; then
+                    log_error "Conflicts in logical files — manual resolution needed:"
+                    for f in "${logical_conflicts[@]}"; do
+                        log_detail "  $f"
+                    done
+                    git_quiet merge --abort
+                    indent_pop
+                    return 1
+                fi
+
+                # Format-only conflicts: accept upstream content, will reformat below
+                for f in "${format_only[@]}"; do
+                    git checkout --theirs "$f" 2>/dev/null
+                    git add "$f"
+                done
+                git commit --no-verify --no-edit >& /dev/null || {
+                    log_error "Failed to commit merge resolution"
+                    git_quiet merge --abort 2>/dev/null
+                    indent_pop
+                    return 1
+                }
+                log_operation "Resolved ${#format_only[@]} format-only conflicts"
+            fi
+
+            # Re-initialize submodules after merge (development doesn't track them,
+            # but ci-base does via .gitmodules).  The merge may leave stale working
+            # trees; a sync+update restores the correct gitlinks and checkouts
+            # without touching the index entries that pixi needs.
+            # In rebuild mode, .gitmodules must NOT be present — the purity assertion
+            # enforces this; abort hard if it is detected here.
+            if [ -f ".gitmodules" ] && [ "$REBUILD_MODE" != "true" ]; then
+                git submodule sync --quiet 2>/dev/null
+                git submodule update --init --force 2>/dev/null
+            elif [ -f ".gitmodules" ] && [ "$REBUILD_MODE" = "true" ]; then
+                log_error "FATAL: .gitmodules found in ci-base after seed merge — sub-package artifact leaked into development or SEED"
+                return 1
+            fi
+
+            # Reformat any new/changed upstream files.
+            # Use ruff directly — pixi run format fails before pixi-workspace is merged
+            # (sub-packages/ don't exist yet, breaking pixi dependency resolution).
+            local format_ok=false
+            local ruff_cmd=""
+            if command -v ruff &> /dev/null; then
+                ruff_cmd="ruff"
+            elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+                ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+            fi
+
+            if [ -n "$ruff_cmd" ]; then
+                if $ruff_cmd format hummingbot test controllers scripts >& /dev/null; then
+                    format_ok=true
+                else
+                    log_warning "ruff format failed"
+                fi
+            else
+                log_warning "ruff not found — skipping format step"
+            fi
+
+            if [ "$format_ok" = true ]; then
+                # Run ruff I-rule (import sort) after format
+                $ruff_cmd check --select I --fix hummingbot test controllers scripts >& /dev/null || true
+                # Run ruff lint autofix (safe fixes only) so pre-existing upstream
+                # violations (e.g. F811 redefinitions) that pre-commit-on-diff catches
+                # are resolved, not just import sorting.
+                $ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
+                # Commit ALL in-scope tracked files ruff modified (not just the sync
+                # delta) so pre-existing unformatted upstream files are also brought
+                # into ruff compliance on ci-base. First run may be a large one-time
+                # catch-up commit; subsequent runs are no-ops.
+                if ! git diff --quiet -- hummingbot test controllers scripts ':!sub-packages' 2>/dev/null; then
+                    git add -- hummingbot test controllers scripts ':!sub-packages'
+                    git commit --no-verify -m "style: ruff format + lint fix + import sort (ci-base compliance)" >& /dev/null
+                    log_operation "Formatted + lint-fixed ci-base to ruff compliance"
                 else
                     log_operation "No formatting changes needed"
                 fi
-            else
-                log_operation "No new upstream Python files to format"
             fi
-        fi
-    fi  # end dev_already_merged guard
+        fi  # end dev_already_merged guard
+    fi  # end REBUILD_MODE branch
 
     # Merge _for_ci/* branches — ci-base-layer targeted fixes.
     # Runs unconditionally: _for_ci/* branches are OUR infrastructure additions
@@ -315,6 +588,35 @@ sync_base_branch() {
         log_error "_for_ci/* merge failed — rebuild aborted"
         return 1
     }
+
+    # Inject external=["mock"] into [tool.ruff.lint] in pyproject.toml.
+    # Suppresses 146KB of 'Invalid # noqa directive' warnings for # noqa: mock.
+    # Delivered here (not via _for_ci/* branch) because pyproject.toml is in the
+    # logical-conflict abort list — any earlier _for_ci/* branch touching it makes
+    # subsequent pyproject.toml merges abort categorically.
+    if [ -f "pyproject.toml" ] && ! grep -q 'external = \["mock"\]' pyproject.toml; then
+        python3 - <<'PYEOF'
+import re
+path = "pyproject.toml"
+c = open(path).read()
+c = re.sub(
+    r'(\[tool\.ruff\.lint\](?:.*?\n)*?ignore\s*=\s*\[[^\]]*\]\n)',
+    r'\1external = ["mock"]\n',
+    c
+)
+open(path, "w").write(c)
+PYEOF
+        if ! git diff --quiet pyproject.toml; then
+            git add pyproject.toml
+            git commit --no-verify -m 'fix(ruff): inject external=["mock"] to suppress # noqa: mock warnings' >/dev/null 2>&1 \
+                && log_operation "Injected external=[\"mock\"] into [tool.ruff.lint]" \
+                || log_warning "Failed to commit ruff external=[\"mock\"] fix"
+        else
+            log_warning "ruff external=[\"mock\"] injection: no change made (pattern not found)"
+        fi
+    else
+        log_operation "ruff external=[\"mock\"] already present — skipping"
+    fi
 
     # Post-merge py312 transform pass — scoped to files changed since ORIG_HEAD
     # (development sync + _for_ci merges combined).  Runs AFTER all merges so a
@@ -335,7 +637,220 @@ sync_base_branch() {
         log_operation "py312 post-merge transform: no Python files changed"
     fi
 
+    # Final ruff normalization pass — runs AFTER merge_for_ci_branches AND the
+    # py312 transform pass. The pre-merge format pass (above) only normalizes files
+    # present BEFORE the _for_ci/* merges; cleanly-merged _for_ci files (rebased onto
+    # development, never ci-base-formatted) and any py312 transform output therefore
+    # arrive with import-order/format drift that fails the ci-base Quality gate
+    # (ruff I001 + format). This pass brings the final tree into compliance.
+    # Self-contained ruff detection so it works in incremental (non-REBUILD) mode
+    # where the earlier ruff_cmd is never set. Idempotent: no-op when already clean.
+    local final_ruff_cmd=""
+    if command -v ruff &> /dev/null; then
+        final_ruff_cmd="ruff"
+    elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+        final_ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+    fi
+    if [ -n "$final_ruff_cmd" ]; then
+        $final_ruff_cmd format hummingbot test controllers scripts >& /dev/null || true
+        $final_ruff_cmd check --select I --fix hummingbot test controllers scripts >& /dev/null || true
+        $final_ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
+        if ! git diff --quiet -- hummingbot test controllers scripts ':!sub-packages' 2>/dev/null; then
+            git add -- hummingbot test controllers scripts ':!sub-packages'
+            git commit --no-verify -m "style: final ruff format + import sort after _for_ci merges (ci-base compliance)" >& /dev/null
+            log_operation "Final ruff normalization after _for_ci merges"
+        else
+            log_operation "Final ruff normalization: no changes needed"
+        fi
+    else
+        log_warning "ruff not found — skipping final normalization"
+    fi
+
     log_result true "Base branch synced"
+    return 0
+}
+
+###############################################################################
+# Modular Branch Sync
+# -------------------
+# 1. Merges ci-base into the `modular` branch (--no-ff to preserve history).
+#    modular may contain cherry-picked content ci-base doesn't have, so a
+#    fast-forward would lose those commits.  A real merge absorbs ci-base
+#    advances while keeping modular's own divergent commits.
+# 2. Merges sub-package wiring branches listed in modular.tracked_branches.
+#    (see merge_for_modular_branches below)
+###############################################################################
+sync_modular_branch() {
+    local modular_branch="$1"
+    local base_branch="$2"
+
+    log_section "Merging $base_branch into $modular_branch"
+
+    # Check out modular (create from base_branch tip if it doesn't exist yet)
+    if git show-ref --verify --quiet "refs/heads/$modular_branch"; then
+        git checkout "$modular_branch" >& /dev/null || {
+            log_error "Failed to checkout $modular_branch"
+            return 1
+        }
+
+        # Reset local modular to origin to prevent stale-local-ref false positives.
+        # If a prior rebuild advanced local modular without pushing, the is-ancestor
+        # check would skip the merge and the bug perpetuates.
+        if git ls-remote --exit-code origin "refs/heads/$modular_branch" >/dev/null 2>&1; then
+            git fetch origin "$modular_branch" >/dev/null 2>&1 || true
+            git reset --hard "origin/$modular_branch" >/dev/null 2>&1 || {
+                log_error "Failed to reset $modular_branch to origin/$modular_branch"
+                return 1
+            }
+            log_operation "Reset $modular_branch to origin/$modular_branch tip"
+        fi
+
+        if git merge-base --is-ancestor "$base_branch" "$modular_branch" 2>/dev/null; then
+            log_operation "$modular_branch already up to date with $base_branch — no merge needed"
+        else
+            # Merge ci-base into modular preserving modular's own commit history.
+            # Skip pre-commit hooks for script-internal merge; gpg-signing handled by agent.
+            if git merge --no-ff --no-verify \
+                   "$base_branch" \
+                   -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
+                log_operation "Merged $base_branch into $modular_branch"
+            else
+                # Classify conflicts: logical → abort, format-only → auto-resolve
+                local logical_conflicts=() format_only=()
+                while IFS= read -r file; do
+                    case "$file" in
+                        pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                            logical_conflicts+=("$file") ;;
+                        *)
+                            format_only+=("$file") ;;
+                    esac
+                done < <(git diff --name-only --diff-filter=U)
+
+                if [ ${#logical_conflicts[@]} -gt 0 ]; then
+                    log_error "Logical conflicts merging $base_branch into $modular_branch — manual resolution needed:"
+                    for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                    git merge --abort >& /dev/null
+                    return 1
+                fi
+
+                for f in "${format_only[@]}"; do
+                    git checkout --theirs "$f" 2>/dev/null
+                    git add "$f"
+                done
+                git commit --no-verify --no-edit >& /dev/null || {
+                    log_error "Failed to commit format-only conflict resolution for $base_branch merge"
+                    git merge --abort >& /dev/null
+                    return 1
+                }
+                log_operation "Merged $base_branch (${#format_only[@]} format-only conflicts resolved)"
+            fi
+        fi
+    else
+        # First run: create modular from base_branch tip (prefer local, fallback to remote)
+        local base_tip
+        base_tip=$(git rev-parse "$base_branch" 2>/dev/null) || \
+        base_tip=$(git rev-parse "origin/$base_branch" 2>/dev/null) || {
+            log_error "Cannot resolve $base_branch tip — aborting modular sync"
+            return 1
+        }
+        git checkout -b "$modular_branch" "$base_tip" >& /dev/null || {
+            log_error "Failed to create $modular_branch from $base_branch"
+            return 1
+        }
+        log_operation "$modular_branch created from $base_branch tip ($base_tip)"
+    fi
+
+    # Merge modular tracked_branches — sub-package wiring branches.
+    # Runs unconditionally after the base merge: these are OUR additions that
+    # must land on modular regardless of whether ci-base had new commits.
+    merge_for_modular_branches "$modular_branch" || {
+        log_error "Modular tracked-branch merge failed — rebuild aborted"
+        return 1
+    }
+
+    log_result true "$modular_branch sync complete"
+    return 0
+}
+
+###############################################################################
+# Modular Tracked-Branch Merge Pass
+# ----------------------------------
+# Merges branches listed under target_branches.modular.tracked_branches into
+# the modular branch.  Runs AFTER the fast-forward to ci-base tip.
+# These are sub-package wiring branches (e.g. _for_bleed/strategy-framework).
+# Conflict gates mirror merge_for_ci_branches: logical conflicts abort hard.
+###############################################################################
+merge_for_modular_branches() {
+    local modular_branch="$1"
+
+    # Read branches from YAML; skip if none configured
+    local modular_branches
+    modular_branches="$(yq -r '.target_branches["modular"].tracked_branches // [] | .[] | select(.enabled == true) | .name' "$BRANCH_CONFIG" 2>/dev/null)"
+    if [ -z "$modular_branches" ]; then
+        log_operation "No modular tracked branches configured — skipping"
+        return 0
+    fi
+
+    log_section "Merging modular tracked branches into $modular_branch"
+
+    while IFS= read -r branch; do
+        [ -z "$branch" ] && continue
+        log_operation "Merging $branch"
+
+        local location
+        location=$(branch_exists "$branch")
+        if [ "$location" = "none" ]; then
+            log_error "Modular branch $branch not found — skipping"
+            continue
+        fi
+
+        local ref="$branch"
+        if [ "$location" = "remote" ]; then
+            git fetch origin "$branch" >& /dev/null || { log_error "Fetch failed for $branch"; return 1; }
+            ref="origin/$branch"
+        fi
+
+        git checkout "$modular_branch" >& /dev/null || { log_error "Checkout $modular_branch failed"; return 1; }
+
+        if git merge-base --is-ancestor "$ref" "$modular_branch" 2>/dev/null; then
+            log_operation "$branch already in $modular_branch — skipping"
+            continue
+        fi
+
+        if git merge --no-ff "$ref" -m "Auto-merge $branch into $modular_branch" >& /dev/null; then
+            log_result true "$branch merged cleanly"
+        else
+            # Classify conflicts: logical → abort, format-only → auto-resolve
+            local logical_conflicts=() format_only=()
+            while IFS= read -r file; do
+                case "$file" in
+                    pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                        logical_conflicts+=("$file") ;;
+                    *)
+                        format_only+=("$file") ;;
+                esac
+            done < <(git diff --name-only --diff-filter=U)
+
+            if [ ${#logical_conflicts[@]} -gt 0 ]; then
+                log_error "Logical conflicts in $branch — manual resolution needed:"
+                for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                git merge --abort >& /dev/null
+                return 1
+            fi
+
+            for f in "${format_only[@]}"; do
+                git checkout --theirs "$f" 2>/dev/null
+                git add "$f"
+            done
+            git commit --no-verify --no-edit >& /dev/null || {
+                log_error "Failed to commit format-only conflict resolution for $branch"
+                git merge --abort >& /dev/null
+                return 1
+            }
+            log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+        fi
+    done < <(echo "$modular_branches")
+
     return 0
 }
 
@@ -384,7 +899,7 @@ merge_for_ci_branches() {
             continue
         fi
 
-        if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
+        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
             log_result true "$branch merged cleanly"
         else
             # Classify conflicts: logical → abort, format-only → auto-resolve
@@ -409,7 +924,7 @@ merge_for_ci_branches() {
                 git checkout --theirs "$f" 2>/dev/null
                 git add "$f"
             done
-            git -c commit.gpgsign=false commit --no-verify --no-edit >& /dev/null || {
+            git commit --no-verify --no-edit >& /dev/null || {
                 log_error "Failed to commit format-only conflict resolution for $branch"
                 git merge --abort >& /dev/null
                 return 1
@@ -565,7 +1080,7 @@ extract_missing_tests() {
 
 run_tests() {
     local target_branch="$1"
-    local source_branch="$2"
+    local source_branch="${2:-}"
 
     # Skip test verification during rebuild — the branch was just recreated
     # from development, so the test verifier can't resolve refs properly.
@@ -576,60 +1091,94 @@ run_tests() {
 
     log_section "$(colorize "$BLUE" "Running tests")"
 
-    local test_script="${SCRIPT_DIR}/hummingbot-select-test-verifier.sh"
-    if [ ! -x "$test_script" ]; then
-        log_error "Test script not found or not executable"
-        indent_pop
+    # Paths
+    local selector_script="${REPO_PATH}/.github/test-selection/select_tests.py"
+    local selector_config="${REPO_PATH}/.github/test-selection/test-selection-map.yaml"
+    local selector_state="${SCRIPT_DIR}/../state/select_tests_state.json"
+    local timestamp
+    timestamp="$(date '+%Y%m%d_%H%M%S')"
+    local selector_log="${LOG_PATH}/select_tests_branch_${target_branch//\//_}_${timestamp}.log"
+    local pytest_log="${LOG_PATH}/pytest_branch_${target_branch//\//_}_${timestamp}.log"
+    local test_list_file="${LOG_PATH}/testlist_branch_${target_branch//\//_}_${timestamp}.txt"
+
+    # Selector availability check (graceful degradation)
+    if ! command -v python3 >/dev/null 2>&1 || [ ! -f "$selector_script" ]; then
+        log_step "Tests skipped: python3 or selector script not available"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$selector_state")"
+
+    # Resolve head SHA (used for mark-success and dedup)
+    local head_sha
+    head_sha="$(git -C "$REPO_PATH" rev-parse "$target_branch" 2>/dev/null)"
+    if [ -z "$head_sha" ]; then
+        log_result false "Tests aborted: could not resolve head SHA for $target_branch"
         return 1
     fi
 
-    # Get git changes
-    local git_changes
-    git_changes=$(git_quiet show --stat HEAD)
-    parse_git_changes "$git_changes"
+    # Selector invocation
+    local selector_args=(
+        --mode branch
+        --base-ref "origin/$DEVELOPMENT_BRANCH"
+        --head-ref "$target_branch"
+        --config "$selector_config"
+        --state-file "$selector_state"
+        --repo "$REPO_PATH"
+    )
+    if [ -n "$source_branch" ]; then
+        selector_args+=(--source-branch "$source_branch")
+    fi
 
-    # Run tests — pass source branch so verifier can check only branch-specific changes
-    "$test_script" "origin/$DEVELOPMENT_BRANCH" "$target_branch" "$source_branch" > "${TEMP_LOG}" 2>&1
-    local test_exit_code=$?
+    local selector_exit=0
+    (cd "$REPO_PATH" && pixi run python "$selector_script" "${selector_args[@]}") > "$test_list_file" 2> "$selector_log" || selector_exit=$?
 
-    cat "${TEMP_LOG}"
-    # Check for test failures
-    if grep -q "FAILED" "${TEMP_LOG}"; then
-        log_error "Test failures detected"
-        while IFS= read -r line; do
-            if [[ $line =~ FAILED ]]; then
-                log_detail "✗ ${line}"
+    case "$selector_exit" in
+        0)
+            # Filter blank lines and comments
+            local test_files
+            test_files="$(grep -v '^#' "$test_list_file" | grep -v '^[[:space:]]*$' || true)"
+            if [ -z "$test_files" ]; then
+                log_step "Selector returned 0 tests (dedup hit or empty selection); skipping pytest"
+                return 0
             fi
-        done < "${TEMP_LOG}"
-        indent_pop
-        return 1
-    fi
-
-    # Check for missing tests
-    extract_missing_tests "${TEMP_LOG}"
-    local missing_tests_status=$?
-    if [ $missing_tests_status -eq 1 ]; then
-        log_warning "Some files need test coverage"
-    fi
-
-    # If there were changes but all tests passed
-    if grep -q "All tests passed" "${TEMP_LOG}"; then
-        log_detail "All existing tests passed"
-    fi
-
-    if [ $missing_tests_status -eq 1 ]; then
-        log_warning "Merge allowed but tests should be added"
-        indent_pop
-        return 0
-    fi
-
-    if [ $test_exit_code -eq 0 ]; then
-        indent_pop
-        return 0
-    else
-        indent_pop
-        return 1
-    fi
+            local test_count
+            test_count="$(echo "$test_files" | wc -l)"
+            log_step "Selector chose $test_count tests; running pixi pytest"
+            # shellcheck disable=SC2086
+            (cd "$REPO_PATH" && pixi run pytest $test_files -v) > "$pytest_log" 2>&1
+            local pytest_exit=$?
+            if [ "$pytest_exit" -eq 0 ]; then
+                log_result true "pytest PASS ($test_count tests); see $(basename "$pytest_log")"
+                # Update state with success
+                (cd "$REPO_PATH" && pixi run python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                    log_step "Warning: failed to mark $head_sha as tested"
+                return 0
+            else
+                log_result false "pytest FAIL ($test_count tests, exit=$pytest_exit); see $pytest_log"
+                return 1
+            fi
+            ;;
+        2)
+            # Escape hatch: run full suite
+            log_step "Selector emitted escape-hatch (exit 2); running full pixi pytest suite"
+            (cd "$REPO_PATH" && pixi run pytest -v) > "$pytest_log" 2>&1
+            local pytest_exit=$?
+            if [ "$pytest_exit" -eq 0 ]; then
+                log_result true "Full-suite pytest PASS; see $(basename "$pytest_log")"
+                (cd "$REPO_PATH" && pixi run python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                    log_step "Warning: failed to mark $head_sha as tested"
+                return 0
+            else
+                log_result false "Full-suite pytest FAIL (exit=$pytest_exit); see $pytest_log"
+                return 1
+            fi
+            ;;
+        *)
+            log_result false "Selector failed (exit=$selector_exit); see $selector_log"
+            return 1
+            ;;
+    esac
 }
 
 ###############################################################################
@@ -1011,20 +1560,44 @@ main() {
 
   if [ "$1" = "--rebuild" ]; then
       REBUILD_MODE=true
+      # pixi.lock churn from pixi solves is transient in this rebuild-output tree; discard
+      # it so the clean-state gate and the rebuild's branch checkouts do not abort.
+      git -C "$REPO_PATH" checkout -- pixi.lock 2>/dev/null || true
       ensure_clean_state || exit 1
       log_section "$(colorize "$YELLOW" "Rebuilding")"
 
-      # Determine base branch from config (falls back to development if unset)
+      # The 3-layer architecture: development → ci-base → modular → bleeding-edge.
+      # ci-base is ALWAYS the infra root; modular sits above it; FEATURE_BRANCH (typically
+      # bleeding-edge) sits above modular. get_base_branch(bleeding-edge) returns "modular",
+      # but sync_base_branch must operate on ci-base, not modular — otherwise _for_ci/*
+      # branches get merged into modular instead of ci-base.
+      local root_base_branch="ci-base"
       local base_branch
       base_branch="$(get_base_branch "$FEATURE_BRANCH")"
 
-      if [ -n "$base_branch" ]; then
-          # Sync base branch with development (merge + format)
-          sync_base_branch "$base_branch" || {
-              log_error "Base branch sync failed — rebuild aborted"
+      # Step 1: sync ci-base with development + merge _for_ci/* into ci-base
+      sync_base_branch "$root_base_branch" || {
+          log_error "ci-base sync failed — rebuild aborted"
+          exit 1
+      }
+
+      # Step 1b: Assert ci-base purity before advancing to modular (REBUILD_MODE only)
+      if [ "$REBUILD_MODE" = "true" ]; then
+          git checkout "$root_base_branch" >& /dev/null
+          assert_ci_base_purity || exit 1
+      fi
+
+      # Step 2: if FEATURE_BRANCH is bleeding-edge (base = modular), advance modular.
+      # If FEATURE_BRANCH IS modular itself, skip (we just synced it via step 1's modular path? No — step 1 used ci-base).
+      # If FEATURE_BRANCH IS ci-base, skip (already synced).
+      if [ -n "$base_branch" ] && [ "$base_branch" != "$root_base_branch" ]; then
+          sync_modular_branch "$base_branch" "$root_base_branch" || {
+              log_error "Modular ($base_branch) sync failed — rebuild aborted"
               exit 1
           }
+      fi
 
+      if [ -n "$base_branch" ]; then
           log_operation "Create $FEATURE_BRANCH from $base_branch"
           git_quiet checkout "$base_branch"
           git_quiet branch -D "$FEATURE_BRANCH" >& /dev/null
@@ -1053,6 +1626,22 @@ main() {
           exit 1
       }
       log_result true "Rebuild complete"
+  fi
+
+  # Ensure local modular tracks origin/modular even in incremental cron mode.
+  # sync_modular_branch (which does this for --rebuild) is gated above; without
+  # this block, direct commits to origin/modular wouldn't propagate.
+  if git show-ref --verify --quiet "refs/heads/modular"; then
+      git fetch origin modular >/dev/null 2>&1 || log_operation "modular fetch failed (non-fatal)"
+      local _current_branch
+      _current_branch=$(git rev-parse --abbrev-ref HEAD)
+      git checkout modular >& /dev/null || log_error "Failed to checkout modular for sync"
+      if git merge --ff-only origin/modular >& /dev/null; then
+          log_operation "modular fast-forwarded to origin/modular"
+      else
+          log_operation "modular not fast-forwardable to origin/modular (diverged or already at tip)"
+      fi
+      git checkout "$_current_branch" >& /dev/null
   fi
 
   INDENT_LEVEL=0  # Flatten output for branch processing
@@ -1104,6 +1693,7 @@ main() {
       fi
       if [ -n "$ruff_cmd" ]; then
           $ruff_cmd format hummingbot test controllers scripts >& /dev/null
+          $ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
       fi
       if [ -n "$isort_cmd" ]; then
           $isort_cmd hummingbot test controllers scripts >& /dev/null
@@ -1111,7 +1701,7 @@ main() {
       if [ -n "$ruff_cmd" ] || [ -n "$isort_cmd" ]; then
           if ! git diff --quiet; then
               git add -A -- . ':!sub-packages'
-              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format + isort pass after rebuild" >& /dev/null
+              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format + lint fix + isort pass after rebuild" >& /dev/null
               log_step "Applied final format pass"
           fi
       fi
@@ -1149,6 +1739,115 @@ main() {
       local MANUAL_REBUILD_SUMMARY="${LOG_PATH}/manual_rebuild_latest.txt"
       write_run_summary "$MANUAL_REBUILD_SUMMARY" 0 "n/a" "success" "n/a" "(stdout)"
       log_step "Wrote manual rebuild summary to $MANUAL_REBUILD_SUMMARY"
+  fi
+
+  # ----------------------------------------------------------------------------
+  # Pre-push CI gate. We must NEVER publish a branch that would be red on CI:
+  # upstream development is green and _for_ci/_for_bleed merges must not introduce
+  # regressions onto ci-base/modular/bleeding-edge. For each output branch, in
+  # dependency order, we run THE EXACT commands CI runs (workflow.yml, env -e ci),
+  # locally, BEFORE pushing, so "green locally" == "green on CI":
+  #   Quality (hard): pre-commit on the diff vs development (auto-fix + recommit,
+  #                   then re-verify) + `lint` + `format-check`. (CI's type-check is
+  #                   continue-on-error, so it is NOT a hard gate here.)
+  #   Tests   (hard): `build` + CI's exact `coverage run -m pytest` invocation with
+  #                   the --timeout/--ignore set (KEEP IN SYNC with workflow.yml).
+  # Only a branch passing BOTH is pushed (--force-with-lease). If ci-base fails we
+  # abort before pushing anything downstream (modular/bleeding-edge build on it). On
+  # any failure: branches left built-but-unpushed, exit 1 so cron/operator sees it,
+  # ci-base-pr NOT refreshed. NOTE: full build+test per branch is intentionally
+  # expensive — correctness over speed, per requirement.
+  # ----------------------------------------------------------------------------
+  log_section "Pre-push CI gate (quality + tests, CI-identical)"
+  local _pixi_cmd="" _gate_branch _changed _q_ok
+  local -a _pushed=()
+  local _gate_failed=false
+  if command -v pixi &> /dev/null; then
+      _pixi_cmd="pixi"
+  else
+      log_error "pixi not found — cannot run CI-identical gate; refusing to push unverified branches"
+      exit 1
+  fi
+  local -a _pytest_ignores=(
+      --timeout=30
+      --ignore=test/mock
+      --ignore=test/hummingbot/connector/exchange/ndax/
+      --ignore=test/hummingbot/connector/derivative/dydx_v4_perpetual/
+      --ignore=test/hummingbot/connector/derivative/decibel_perpetual/
+      --ignore=test/hummingbot/core/rate_oracle/sources/test_decibel_perpetual_rate_source.py
+      --ignore=test/hummingbot/connector/exchange/vertex/
+      --ignore=test/hummingbot/connector/gateway/
+      --ignore=test/connector/utilities/oms_connector/
+      --ignore=test/hummingbot/strategy/amm_arb/
+      --ignore=test/hummingbot/strategy/cross_exchange_market_making/
+  )
+
+  for _gate_branch in "ci-base" "modular" "$FEATURE_BRANCH"; do
+      log_step "Gating $_gate_branch (quality + tests)"
+      if ! git -C "$REPO_PATH" checkout "$_gate_branch" >& /dev/null; then
+          log_error "  checkout $_gate_branch failed — aborting gate"
+          _gate_failed=true; break
+      fi
+
+      _q_ok=true
+      _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+      if [ -n "$_changed" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >& /dev/null; then
+              if ! git -C "$REPO_PATH" diff --quiet; then
+                  git -C "$REPO_PATH" add -A -- . ':!sub-packages'
+                  git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
+                      -m "style: pre-push CI-gate autofix on $_gate_branch" >& /dev/null
+              fi
+              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+              if [ -n "$_changed" ]; then
+                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >& /dev/null || _q_ok=false
+              fi
+          fi
+      fi
+      if [ "$_q_ok" = true ]; then
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint ) >& /dev/null || _q_ok=false
+      fi
+      if [ "$_q_ok" = true ]; then
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci format-check ) >& /dev/null || _q_ok=false
+      fi
+      if [ "$_q_ok" != true ]; then
+          log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check"
+          _gate_failed=true; break
+      fi
+      log_detail "  quality: pass"
+
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& /dev/null; then
+          log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build"
+          _gate_failed=true; break
+      fi
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci coverage run -m pytest "${_pytest_ignores[@]}" ) >& /dev/null; then
+          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci coverage run -m pytest ${_pytest_ignores[*]}"
+          _gate_failed=true; break
+      fi
+      log_detail "  tests: pass"
+
+      if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+          _pushed+=("$_gate_branch")
+          log_result true "$_gate_branch gated green + pushed"
+      else
+          log_error "  push FAILED for $_gate_branch (gates passed) — run: git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
+          _gate_failed=true; break
+      fi
+  done
+
+  if [ "$_gate_failed" = true ]; then
+      log_error "Pre-push gate halted. Pushed: [${_pushed[*]:-none}]. Remaining branches built locally but NOT pushed. ci-base-pr NOT refreshed. Fix the failures and re-run."
+      exit 1
+  fi
+
+  # All outputs verified green + pushed -> refresh the squashed ci-base-pr snapshot
+  # (regenerate-ci-base-pr.sh reads origin/ci-base^{tree}, now freshly pushed + green;
+  # MUST run after the ci-base push). Checkout-safe (refspec push via commit-tree).
+  local _regen_script="$(dirname "${BASH_SOURCE[0]}")/regenerate-ci-base-pr.sh"
+  if [ -x "$_regen_script" ] && bash "$_regen_script" "$REPO_PATH" >& /dev/null; then
+      log_result true "regenerated + pushed ci-base-pr (green)"
+  else
+      log_error "ci-base-pr NOT refreshed (regenerate-ci-base-pr.sh missing or failed) — run it manually"
   fi
 }
 
