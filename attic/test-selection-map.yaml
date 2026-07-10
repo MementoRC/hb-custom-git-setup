@@ -1,0 +1,79 @@
+# test-selection-map.yaml
+#
+# Purpose:
+#   Diff-driven test selection map for the upstream→ci-base gate.
+#   Given a set of changed source files (from a git diff), this map
+#   determines which test files should be run — narrowing the test
+#   surface without skipping mandatory baseline coverage.
+#
+# Generation:
+#   v1: Hand-rolled from codebase topology survey + known high-risk files.
+#   v2: Deferred — planned approach is pytest --collect-only introspection
+#       to auto-derive mirror_rule coverage and surface unmapped sources.
+#
+# Growth policy:
+#   Grow `cross_cutting` and `extra_mappings` from shadow-mode misses.
+#   Run with --shadow to observe what would have been selected vs what
+#   actually needed to run, then promote new rules here.
+#
+# Reference:
+#   hummingbot_ai_docs/2026-06-06-diff-driven-test-selection.md
+
+version: 1
+
+# Always run, regardless of diff
+always_on:
+  # Interface base classes — break these and everything downstream fails
+  - test/hummingbot/strategy_v2/executors/test_executor_base.py
+  - test/hummingbot/strategy_v2/controllers/test_controller_base.py
+  - test/hummingbot/strategy_v2/controllers/test_directional_trading_controller_base.py
+  - test/hummingbot/strategy_v2/controllers/test_market_making_controller_base.py
+  - test/hummingbot/strategy_v2/controllers/test_progressive_trading_controller_base.py
+  - test/hummingbot/strategy_v2/test_runnable_base.py
+  - test/hummingbot/connector/test_connector_base.py
+  - test/hummingbot/strategy/test_strategy_v2_base.py
+  - test/hummingbot/core/test_network_base.py
+  - test/hummingbot/core/test_pubsub.py
+  - test/hummingbot/client/ui/test_interface_utils.py
+
+# Changes matching these globs trigger ZERO tests
+ignore:
+  - "**/*.md"
+  - "docs/**"
+  - ".github/**"
+  - "**/CHANGELOG*"
+  - "**/.gitignore"
+  - "**/LICENSE*"
+  - "hummingbot_ai_docs/**"
+
+# Primary pattern: test/hummingbot/X/ mirrors hummingbot/X/
+mirror_rule:
+  enabled: true
+  source_root: "hummingbot"
+  test_root: "test/hummingbot"
+  test_filename_prefix: "test_"   # source foo.py -> test test_foo.py in mirrored dir
+
+# Overrides + 3-pattern fallback compatibility from hummingbot-select-test-verifier.sh
+# Patterns applied AFTER mirror_rule fails. Use globs.
+extra_mappings:
+  # Compat with verifier's pattern 3: test/test_<name>.py for orphan source files
+  - source_glob: "hummingbot/*.py"
+    test_globs: ["test/test_{basename}.py"]
+  # Sub-package source -> sub-package tests (each sub-package owns its tests)
+  - source_glob: "sub-packages/*/src/**/*.py"
+    test_globs: ["sub-packages/{1}/tests/**/*.py"]
+
+# Cross-cutting: any change to source_glob triggers tests_globs (broad)
+# Seed minimal — grow from shadow-mode misses.
+cross_cutting:
+  - source_glob: "hummingbot/core/pubsub.*"
+    tests_globs: ["test/hummingbot/**/*.py"]
+  - source_glob: "hummingbot/strategy_v2/executors/executor_base.py"
+    tests_globs: ["test/hummingbot/strategy_v2/**/*.py"]
+  - source_glob: "hummingbot/strategy_v2/controllers/controller_base.py"
+    tests_globs: ["test/hummingbot/strategy_v2/**/*.py"]
+  - source_glob: "hummingbot/core/data_type/common.py"
+    tests_globs: ["test/hummingbot/**/*.py"]
+
+# Selected/total > N% triggers exit code 2 (caller falls back to full suite)
+escape_threshold_pct: 50
