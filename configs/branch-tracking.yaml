@@ -3,6 +3,15 @@
 # Declares which branches should be merged into target branches.
 # Used by hummingbot-branch-tracking.sh and hummingbot-rebase-check.sh.
 #
+# 3-layer architecture (rebuild order):
+#   development  → ci-base (infra: format pass + _for_ci/* merges)
+#                        → modular (passthrough: fast-forward to ci-base tip + sub-package wiring)
+#                               → bleeding-edge (features: _for_bleed/* merged on top of modular)
+#
+# In the future, individual _for_bleed/* branches will declare `base: modular` or
+# `base: bleeding-edge` to route into the appropriate layer. For now all enabled
+# _for_bleed/* branches continue to merge into bleeding-edge unchanged.
+#
 # Fields:
 #   enabled:                    Whether to include in sync cycles
 #   permanent:                  Never auto-disable (always track)
@@ -20,7 +29,7 @@
 #                                                 of the infrastructure layer. Merged AFTER all
 #                                                 infrastructure branches are applied.
 #
-# Last reviewed: 2026-06-09
+# Last reviewed: 2026-07-07
 
 target_branches:
   ci-base:
@@ -29,107 +38,262 @@ target_branches:
     # Same logical-conflict abort gates as _for_bleed (pyproject.toml,
     # conftest.py, .github/, .pre-commit-config.yaml).
     tracked_branches:
-      - name: _for_ci/fix-pytest-asyncio-call-sync-deadlock
-        enabled: true
-        tier: bugfix
-        parent: null
-        description: "Threadsafe call_sync fix — pytest-asyncio cross-thread deadlock exposed by asyncio_mode=auto"
-        permanent: false
-        disable_when_in_development: true
+      # _for_ci/fix-pandas-timestamp-utc: RETIRED 2026-06-11 — zero unique content vs development; pd.Timestamp.UTC already fixed upstream (origin was e9250baf)
+      # _for_ci/fix-singleton-pollution-in-command-tests: RETIRED 2026-06-11 — stale YAML metadata, on-origin work was never re-enabled (origin was c8f70066)
+      # _for_ci/fix-network-mocking-web-assistant-import: RETIRED 2026-06-11 — REROUTED to _for_bleed/web-assistant-migration-batch-5-connector-stragglers (origin was cd8568ff)
+      # _for_ci/tach-modules-coarse: RETIRED 2026-06-11 — SUPERSEDED by _for_bleed/import-linter-adoption (origin was f2d6e52c)
+      # _for_ci/bump-setup-pixi-action: RETIRED 2026-06-14 — setup-pixi v0.9.6 merged into ci-base; branch fully promoted
+      # _for_ci/isort-lighter-hyperliquid-cleanup: RETIRED 2026-06-19 — stale isort tooling now aborts every rebuild; fully absorbed into ci-base
 
-      - name: _for_ci/fix-pandas-timestamp-utc
-        enabled: false  # RETIRED 2026-06-05: zero unique content vs development after rebase; pd.Timestamp.UTC already fixed upstream via different commits. pd.Timestamp.utcnow() cleanup (3 files: markets_recorder.py, migrator.py, mock_api_order_book_data_source.py) still pending — recreate fresh branch if wanted.
-        tier: bugfix
-        parent: null
-        description: "Replace pd.Timestamp.UTC with datetime.timezone.utc for pandas 2.x compatibility (clears PR #22 CI failures)"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_ci/fix-selector-error-message-conda
+      - name: _for_ci/re-remove-conda-setup
         enabled: true
         tier: infrastructure
-        parent: null
-        description: "Replace pip-install-pyyaml hint in select_tests.py with conda/pixi-flavored hint. Defense in depth after wrapper fix that routes python through pixi env."
-        permanent: false
-        disable_when_in_development: false
-
-      - name: _for_ci/fix-singleton-pollution-in-command-tests
-        enabled: false
-        # TODO: re-enable once the _for_ci/fix-singleton-pollution-in-command-tests branch is pushed to origin
-        tier: bugfix
-        parent: null
-        description: "Resets singletons in command/ tests via autouse fixture"
+        description: "Re-delete conda setup artifacts (Makefile/install/setup/*.yml) restored into ci-base by the 2026-06-15 dev-sync. Tracked branch re-applies the deletion every rebuild (merged after dev-sync) so it survives reseeds — robust replacement for the neutralized remove-conda-setup one-time promotion (447d577d). Added 2026-06-18."
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/fix-trade-fee-pep604-string-union
-        enabled: true
-        tier: bugfix
-        parent: null
-        description: "Quote full PEP 604 union in trade_fee.py:182/:201 to fix runtime TypeError from string forward-ref | None. Unblocks pytest collection for any test importing HummingbotApplication."
-        permanent: false
-        disable_when_in_development: true
+      # _for_ci/revert-mqtt-commlib: RETIRED 2026-07-05 — superseded by _for_ci/strip-aiomqtt-seed (validated); local+origin deleted, entry purged
 
-      - name: _for_ci/fix-trading-pair-fetcher-async-utils-import
-        enabled: true
-        tier: bugfix
-        parent: null
-        description: "Fix missed async_utils migration: trading_pair_fetcher.py imports safe_ensure_future from sub-package (async_utils.core) instead of deleted local .async_utils. Unblocks 10 always_on test failures (ModuleNotFoundError on HummingbotApplication import)."
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_ci/fix-network-mocking-web-assistant-import
-        # REROUTED 2026-06-09: 126 connector import sites is feature-tier scope; content moved to _for_bleed/web-assistant-migration-batch-5-connector-stragglers under bleeding-edge tier. See also: orthogonality restoration (_for_ci/* must be narrow fixes, not sub-package migrations).
-        enabled: false
-        tier: bugfix
-        parent: null
-        description: "Fix 126 missed web-assistant migration imports in hummingbot/connector/ (exchange + derivative connectors, network_mocking_assistant, exchange_py_base, utils). Unblocks upstream gate (caught cron sync_20260608_115534)."
-        permanent: false
-        disable_when_in_development: true
-        last_reviewed: "2026-06-09"
-
-      - name: _for_ci/add-diff-driven-test-selection
-        enabled: true
-        tier: bugfix
-        parent: null
-        description: "Vendor diff-driven test selector into .github/test-selection/ so remote CI (quick-check.yml) and local iteration (pixi run test-changed) share a single source with the cron pipeline. Phase 5A."
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_ci/modularization-docs
-        enabled: true
-        tier: infrastructure
-        parent: null
-        description: "MODULARIZATION.md at repo root — static reference for solo-dev onboarding"
-        permanent: false
-        disable_when_in_development: false
-
-      - name: _for_ci/tach-modules-coarse
+      # DISABLED 2026-07-06: aiomqtt now on conda-forge (2.5.1) — reverting to upstream's aiomqtt transport (PR #8293).
+      # Superseded by _for_ci/add-aiomqtt-dep (pixi deps) + development's aiomqtt mqtt.py restored automatically once this
+      # transform stops running. The seed's remote_iface/mqtt.py is ALREADY aiomqtt; this branch was converting it back to
+      # commlib. Kept disabled (not yet deleted) pending rebuild validation, then full three-part retirement.
+      - name: _for_ci/strip-aiomqtt-seed
         enabled: false
         tier: infrastructure
-        parent: null
-        description: "Phase 1 of tach mod integration: 15 populated modules + depends_on edges. PR #47 to ci-base. Plan in hummingbot_ai_docs/2026-06-04-tach-mod-integration-plan.md — SUPERSEDED 2026-06-08 by _for_bleed/import-linter-adoption (tach abandoned; see audit doc). Keep disabled."
+        description: "Strip aiomqtt (PyPI-only, not on conda-forge), restore commlib. Seed-based surgical replacement for revert-mqtt-commlib: commlib remote_iface impls + setup.py/pyproject commlib-py>=0.13.2, no workflow.yml baggage, merges clean into the seed rebuild. Added 2026-06-19. DISABLED 2026-07-06 — see note above."
         permanent: false
         disable_when_in_development: false
 
-      - name: _for_ci/fix-format-task-include-isort
+      - name: _for_ci/add-aiomqtt-dep
         enabled: true
         tier: infrastructure
-        parent: null
-        description: "Add isort>=5.12.0 to dev deps and chain isort into pixi format task so pixi run format matches CI pre-commit hook ordering"
+        description: "Realign ci-base with upstream PR #8293 (feat/mqtt-bridge-aiomqtt): add aiomqtt >=2.0.0 to [tool.pixi.dependencies], drop commlib-py. The frozen ci-base-seed-v1 pixi deps listed commlib-py (>=0.11,<0.13) and no aiomqtt even though the seed's remote_iface/mqtt.py is already the aiomqtt impl; _for_ci/strip-aiomqtt-seed (now disabled) was what converted it back to commlib. aiomqtt now on conda-forge (2.5.1). Branch based off the ci-base-seed-v1 tag so it is a clean single-hunk pixi-deps delta with no ancestry drag (does NOT re-introduce commlib code). Commit ee17100e, GPG-signed. Added 2026-07-06."
         permanent: false
         disable_when_in_development: false
 
-      - name: _for_ci/ci-base-baseline-fixes
+      - name: _for_ci/lint-residual
         enabled: true
         tier: infrastructure
-        parent: null
-        last_reviewed: "2026-06-09"
-        # Active baseline-fix work for ci-base. Gating dependency for
-        # _for_bleed/connector-data-types-extraction-step-1 (waiting on these fixes
-        # to land before its 5 commits can rebase cleanly onto bleeding-edge).
-        # Registered 2026-06-09 as part of ci-base orthogonality restoration.
-        description: "Active baseline-fix accumulator for ci-base: miscellaneous narrow fixes that must land on ci-base before dependent bleeding-edge branches can rebase cleanly"
+        description: "E741 l->order rename in coinbase_advanced_trade_exchange.py — non-autofixable lint residual on upstream source"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/pytest-asyncio-test-fixes
+        enabled: true
+        tier: infrastructure
+        description: "3 test-file deltas: MQTT gateway teardown, skip 5 network tests, cross-exchange-mm event-loop drain (Group F triaged vs #66)"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/guard-lighter-import
+        enabled: true
+        tier: infrastructure
+        description: "Make the lighter SDK import lazy (PyPI-only, not in pixi conda-forge env). lighter_perpetual_derivative.py moved `from lighter import SignerClient` from module top-level into the method that uses it (line ~651) so pytest collection no longer crashes with ModuleNotFoundError on every ci-base CI run (Build+Test exit 2). Clean cherry-pick of 34c9fd54 onto development. Added 2026-06-20."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/format-upstream-residuals
+        enabled: true
+        tier: infrastructure
+        description: "Fix pre-existing ruff violations on upstream source that fail the ci-base 'Quality gates' pre-commit-on-diff step: vertex_constants.py duplicate POSITION_CHANGE_EVENT_TYPE (F811) + lp_executor.py missing magic trailing commas (~6 call sites). Commit e14a2c0 on development. Added 2026-06-20."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/asyncio-test-coroutine-fixes
+        enabled: true
+        tier: infrastructure
+        description: "Python 3.12 asyncio coroutine handling: xrpl_transaction_pipeline.stop() double-await fix (RuntimeError: cannot reuse already awaited coroutine) + lighter perpetual/spot candles unawaited-coroutine test hygiene"
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/restore-test-selection-map
+        enabled: true
+        tier: infrastructure
+        description: "Add missing .github/test-selection/test-selection-map.yaml so select_tests.py (upstream-gate diff-driven selector) can load its config and no longer exits 1. Pure file addition, no conflicts. Added 2026-06-21."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-mqtt-markets-setter
+        enabled: true
+        tier: infrastructure
+        description: "Add @markets.setter to HummingbotApplication delegating to trading_core.connector_manager.connectors, so test setUp assigning self.hbapp.markets = {} no longer raises AttributeError on the read-only property (fixes 56 RemoteIfaceMQTTTests on ci-base). Lands on a non-conflicting file because the rebuild discards test_mqtt.py fixes via merge resolution toward development. Commit 7558d343, GPG-signed. Added 2026-06-21."
+        permanent: false
+        disable_when_in_development: true
+
+      # _for_ci/ruff-external-mock: RETIRED 2026-07-05 — external=["mock"] fix moved to rebuild-script post-processing; local deleted (no origin ref), entry purged
+
+      - name: _for_ci/wallet-key-noqa-missing
+        enabled: true
+        tier: infrastructure
+        description: "Add # noqa: mock to 13 missing hex-string lines across 9 test files (vertex, hyperliquid, injective_v2, derive, bitmart). detect-wallet-private-key pre-commit hook flags mock blockchain hex strings; these files are touched by the py312 transform making them changed vs development and triggering the gate. Commit a2cb992f, GPG-signed. Added 2026-06-24."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/logger-fixes
+        enabled: true
+        tier: infrastructure
+        description: "Fix 23 test gate failures: loosen isinstance to logging.Logger in test_properties (2 test files) + wrap scalar logger regardless of class identity in logger_mixin (20 coinbase tests). Both are load-order independence fixes for HummingbotLogger class-identity split. Rebased onto development base 750f9222. Added 2026-06-25."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/xrpl-proactive-ping-test-timing
+        enabled: true
+        tier: infrastructure
+        description: "Fix 2 XRPL proactive-ping timing-race tests: patch asyncio.create_task to prevent dangling reconnect task in tearDown + increase asyncio.sleep 0.02->0.1s (10x margin over PROACTIVE_PING_INTERVAL=0.01). Fixes TestXRPLNodePoolProactivePingLoop test_proactive_ping_loop_marks_unhealthy_after_errors + test_proactive_ping_loop_resets_errors_on_success. Added 2026-06-25."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-kucoin-timestamp-utc
+        enabled: true
+        tier: infrastructure
+        description: "Fix 4 kucoin_perpetual funding-info tests broken by pd.Timestamp.UTC removal in pandas 3.x. The py312 post-merge transform pass (bba63d7a1) converted utcfromtimestamp() to fromtimestamp(tz=pd.Timestamp.UTC); pd.Timestamp.UTC does not exist in pandas 3.x. Adds 'from datetime import timezone' + replaces tz=pd.Timestamp.UTC with tz=timezone.utc (3 sites). NOTE: branch has ci-base ancestry (rebase onto development impossible because bug is introduced by the ci-base transform itself). Added 2026-06-25."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-pd-timestamp-utc
+        enabled: true
+        tier: infrastructure
+        description: "Fix pd.Timestamp.UTC (removed in pandas 3.x) in 7 files baked into ci-base seed from old py312-runtime mass transform: 4 derivative tests (hyperliquid, derive, gate_io, okx), test/mock/mock_api_order_book_data_source, hummingbot/connector/markets_recorder, hummingbot/model/db_migration/migrator. Replaces tz=pd.Timestamp.UTC with tz=timezone.utc + adds 'from datetime import timezone' (14 occurrences). Branch has ci-base ancestry — rebase not possible (same as fix-kucoin-timestamp-utc). Added 2026-06-26."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-config-display-filter
+        enabled: true
+        tier: infrastructure
+        description: "Fix test_list_configs gate failure: (1) remove kill_switch_rate/ethereum_chain_name/extra_tokens from client_configs_to_display (extra_tokens matched CoinbaseAdvancedTradeRateSourceMode.extra_tokens when local conf has that rate oracle, inflating the config table); (2) pin GateIoRateSourceMode() in test setUp so test is not sensitive to local conf_client.yml rate_oracle_source value. Commit 6c2efb9c, GPG-signed. Added 2026-06-27."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-backpack-balance-staked-lend
+        enabled: true
+        tier: infrastructure
+        description: "Fix 2 test gate failures in BackpackExchangeTests: _update_balances missing staked field in total (available+locked+staked) and not fetching BORROW_LEND_POSITIONS_PATH_URL for lend positions. Adds _get_net_lent_balances() helper (best-effort, asyncio.gather). Branch has ci-base ancestry — rebase not possible (fix is for functionality absent from ci-base seed; development has PR #8323's fix). Commit cbd0fb9e, GPG-signed. Added 2026-06-27."
+        permanent: false
+        disable_when_in_development: true
+
+      # _for_ci/fix-login-prompt-retries: RETIRED 2026-07-05 — superseded by fix-login-prompt-retries-v2; local+origin deleted, entry purged
+
+      - name: _for_ci/fix-backpack-perpetual-margin
+        enabled: true
+        tier: infrastructure
+        description: "Fix test_in_flight_order_reserves_margin_not_full_notional: BackpackPerpetualDerivative was not overriding in_flight_asset_balances(), causing base class to reserve full notional instead of margin (notional/leverage) for BUY orders. Added 21-line override computing margin = amount*price/leverage for cross-margin USDC-settled perps. Commit 3149dac4, GPG-signed. Added 2026-06-27."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-login-prompt-retries-v2
+        enabled: true
+        tier: infrastructure
+        description: "Fix 2 test gate failures in LoginPromptTest (v2 correct fix): tests missing @patch for store_password_verification (real disk write) and legacy_confs_exist (real os.listdir). Both retry tests reach the success path where these unmocked I/O calls crash. Added @patch decorators + mock params to test_login_blank_password_error_retries and test_login_password_do_not_match_error_retries. Branch from ci-base (already has while-loop from v1). Commit 3fed7b4f, GPG-signed. Added 2026-06-27."
+        permanent: false
+        disable_when_in_development: true
+
+      # DISABLED 2026-07-05: content fully absorbed into development + ci-base (0-file diff vs both).
+      # disable_when_in_development never fired because the branch's ci-base ancestry makes its
+      # diff-vs-development non-empty. Its format-only conflict resolution nets to a no-op, which
+      # wedged the rebuild ("Failed to commit format-only conflict resolution"). The rebuild script
+      # now guards no-op commits, but this branch is redundant — leave disabled. Re-enable only if a
+      # seed re-cut drops the _exchange_data_initialized line without development restoring it.
+      - name: _for_ci/fix-lighter-candles-exchange-data-init
+        enabled: false
+        tier: infrastructure
+        description: "Restore 'self.data_feed._exchange_data_initialized = True' to setUp of test_lighter_perpetual_candles.py + test_lighter_spot_candles.py. The ci-base seed's py312/format transform dropped this line (development still has it); without it the 4 lighter perpetual/spot candles tests enter _initialize_exchange_data, await an AsyncMock returning a plain MagicMock, and iterate the coroutine -> TypeError 'coroutine object is not iterable' at lighter_perpetual_candles.py:95 / lighter_spot_candles.py:94. Branch has ci-base ancestry (development already has the line, so a development-based fix produces no restoring diff). Commit 28be527b, GPG-signed. Added 2026-06-28."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-foxbit-typing-imports
+        enabled: true
+        tier: infrastructure
+        description: "Restore Dict/List/Optional to the typing import in foxbit_api_order_book_data_source.py; py312 seed/live-transform stripped them while leaving annotation usages -> 7x F821 failing the bleeding-edge ruff lint gate. Branch has ci-base ancestry (development still has the imports). Added 2026-06-30."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/fix-lighter-exchange-slippage-lazyload
+        enabled: true
+        tier: infrastructure
+        description: "Restore lighter_exchange.py slippage (_effective_order_price applied to ALL market orders, not just NaN price), lazy market-load guard (_get_last_traded_price), and _account_ready_lock - py312 seed-transform fallout. SOURCE-ONLY: the 2 covering tests (slippage-to-passed-price, lazy-loads-markets) come from development via the dev-merge, they were NOT deleted by the transform. development is correct so branch has ci-base ancestry (rebase onto development impossible, same as fix-lighter-candles-exchange-data-init). Merge-simulated against ci-base 7ccf50693: clean merge, both tests pass. Commit da286726, GPG-signed. Added 2026-07-02."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/mexc-user-stream-test-timing
+        enabled: true
+        tier: infrastructure
+        description: "Fix flaky test_mexc_user_stream_data_source::test_listen_for_user_stream_connection_failed: sync tearDown cancels listening_task but never awaits it, so the injected Exception('TEST ERROR') survives to _cancel_all_tasks and re-raises under full-suite timing (passes in isolation + whole-file, fails only in the full modular suite). Adds asyncTearDown that cancels+awaits+suppresses the task, draining it before loop teardown. Blocks the modular test gate. Added 2026-07-04."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/import-linter
+        enabled: true
+        tier: infrastructure
+        description: "PROMOTED 2026-07-05 from _for_bleed/import-linter-adoption (was mis-tiered as a bleeding-edge feature). Replace tach with import-linter for sub-package boundary enforcement: .importlinter (13 contracts enforcing hb_compat/ across 14 sub-packages) + pyproject.toml import-linter dep + lint-boundaries pixi task. Pure tooling/framework, belongs on ci-base. Clean 2-file delta off ci-base; carries ci-base ancestry (pyproject change depends on ci-base pixi config), same class as fix-pd-timestamp-utc. Verified: lint-imports 13 kept/0 broken/332ms."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/test-coverage
+        enabled: true
+        tier: infrastructure
+        description: "PROMOTED 2026-07-05 from _for_bleed/test-coverage (test-only content should not gate a feature branch). 16 orphaned coverage/util test files (test_*_coverage.py) extracted from ci-base 4a901209c with no owning feature. Pure test additions, belongs on ci-base tier. Tip b50817ff."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/augmented-docs
+        enabled: true
+        tier: infrastructure
+        description: "FOLDED 2026-07-05 from retired _for_bleed/augmented-pure-python, whose only unique content was this single doc (docs/development/augmented-pure-python.md, 155 lines); the skill + .gitignore it claimed already live on ci-base. Doc belongs on ci-base next to the skill. Commit 8c6237cb."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/quick-check-ignore-parity
+        enabled: true
+        tier: infrastructure
+        description: "Apply full-ci pytest --ignore list (10 paths: mock, ndax, dydx_v4_perpetual, decibel_perpetual, decibel rate-source test, vertex, gateway, oms_connector, amm_arb, cross_exchange_market_making) to the diff-driven quick-check.yml, which previously ran pytest with NO ignores. Fixes quick-check ModuleNotFoundError (decibel/dydx_v4/vertex) when select_tests.py picks broadly after a ci-base merge. ci-base ancestry (quick-check.yml/workflow.yml are ci-base-only). Commit 12e3f460. Added 2026-07-05."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/fix-hyperliquid-rate-flaky
+        enabled: true
+        tier: infrastructure
+        description: "Fix flaky test_get_hyperliquid_prices_handles_unknown_symbols: get_prices' module-level async_ttl_cache keyed on str((self,...)) suffers stale cache hits across test instances via Python heap-address reuse, returning a prior test's empty result. Adds get_prices.cache_clear() after each instantiation in the 5 async tests that lacked it (mirrors the one test that already had it). Fixes the 1/7403 intermittent failure that reddens kraken-new-order-types and others. ci-base ancestry. Commit 1d29ca4a. Added 2026-07-05."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/snapshot-pr-modular-trigger
+        enabled: true
+        tier: infrastructure
+        description: "Add `modular` to pull_request.branches in .github/workflows/workflow.yml + quick-check.yml so the auto-generated -pr snapshot PRs targeting modular (bleeding-edge-pr -> modular, PR #70) actually run full ci + quick-check. GitHub filters pull_request on base_ref; modular was the only missing base (ci-base/development already present). ci-base ancestry (workflow.yml/quick-check.yml are ci-base-only, same class as quick-check-ignore-parity). Added 2026-07-06."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/fix-injective-delegated-order-timing
+        enabled: true
+        tier: infrastructure
+        description: "Fix flaky test_create_order_fails_when_trading_rule_error_and_raises_failure_event (injective_v2 delegated-account): the 1s asyncio.wait_for(request_sent_event.wait()) times out under the full-suite (1499s) modular gate with CPU contention, blocking the push chain (1 failed/6124 passed). Passes in isolation (10s) + whole-file (49/49). Bumped timeout 1->10 to match the identical request_sent_event wait already at timeout=10 in the same file. Clean off development (no ci-base ancestry) so disable_when_in_development fires correctly. Same class as mexc-user-stream-test-timing / xrpl-proactive-ping-test-timing. Commit b6b2b004, GPG-signed. Added 2026-07-07."
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_ci/ignore-decibel-candles-test
+        enabled: true
+        tier: infrastructure
+        description: "Add test/hummingbot/data_feed/candles_feed/decibel_perpetual_candles/ to the --ignore lists in workflow.yml (Build+Test) and quick-check.yml. ci-base-pr Build+Test failed on test_decibel_perpetual_candles: the in-tree candles supersede-skip (test/conftest.py) needs the candles_feed sub-package which is only installed at the modular tier, so on ci-base the decibel candles test runs and fails (decibel is deliberately excluded/incomplete). Both files already ignore the decibel CONNECTOR paths; this closes the missed candles path. ci-base ancestry (workflow files are ci-base-only). Commit 71557424, GPG-signed. Added 2026-07-08."
+        permanent: false
+        disable_when_in_development: false
+
+  modular:
+    # Passthrough layer between ci-base and bleeding-edge.
+    # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
+    # Any merge conflict during fast-forward is treated as a hard abort (should never occur
+    # because modular tracks ci-base exactly).
+    # tracked_branches here carry sub-package wiring that must land on modular BEFORE
+    # bleeding-edge features are merged.
+    base_branch: ci-base
+
+    tracked_branches:
+      - name: _for_bleed/modular-wiring
+        enabled: true
+        base: modular
+        tier: infrastructure
+        merge_order: 1
+        description: "Sub-package wiring layer: .gitmodules + 14 gitlinks, install-subpackages + compat tasks, ci/check_subpackage_compat.py, web_assistant/async_utils shims, sub-packages-compat CI job, remote_iface Phase-6 cutover (ce0721754)"
         permanent: false
         disable_when_in_development: false
 
@@ -137,10 +301,10 @@ target_branches:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
     # See infrastructure-tier branches here before feature-tier branches below.
-    # Base branch: formatted superset of development.
+    # Base branch: modular (passthrough superset of ci-base, itself a superset of development).
     # Merged INTO bleeding-edge as the starting point (not a tracked branch).
-    # Synced with development + pixi run format + _for_ci/* merges before each rebuild.
-    base_branch: ci-base
+    # modular is fast-forwarded to ci-base tip before each bleeding-edge rebuild.
+    base_branch: modular
 
     tracked_branches:
       # --- CI / infrastructure ---
@@ -150,90 +314,59 @@ target_branches:
       # It is synced with development and used as bleeding-edge's starting point.
 
       - name: _for_bleed/py312-runtime
-        enabled: true
+        enabled: false  # DISABLED 2026-06-25: branch authored on modular tier (3e83cc09e applies PEP 585/604 to ~700 files on modular base); cherry-pick onto ci-base creates 400+ conflicts. Needs full regeneration against current ci-base tip before re-enabling.
+        base: ci-base
         tier: infrastructure
         description: "Python 3.12 runtime: stdlib shims, dependency pins, Cython directives — fixes pyupgrade/refactor cannot produce"
         permanent: true
         disable_when_in_development: false
 
-      - name: _for_bleed/import-linter-adoption
-        enabled: true
-        tier: infrastructure
-        parent: null
-        description: "Replace tach with import-linter for sub-package boundary enforcement. 13 contracts enforce hb_compat/ rule across 14 sub-packages. Adds lint-boundaries pixi task + import-linter dep. Verified: lint-imports → 13 kept, 0 broken, 332ms. Commit 7f61baf1."
-        permanent: false
-        disable_when_in_development: false
-
-      - name: _for_bleed/test-coverage
-        enabled: true
-        tier: infrastructure
-        description: "Low-hanging-fruit test coverage for uncovered lines in diff vs development"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/import-linter-adoption: PROMOTED 2026-07-05 to ci-base tier as _for_ci/import-linter (framework/tooling, was mis-tiered); local+origin deleted, entry moved to ci-base.tracked_branches
 
       - name: _for_bleed/executor-mixins
-        enabled: false  # RETIRED 2026-06-05: superseded — 7 mixin files already on ci-base via progressive-executor merge
+        enabled: true  # re-enabled 2026-06-18: promotion db3641c54 was LOST in the seed-v2 ci-base reseed (2026-06-15 tip 4a901209c); 46 files / mixins+ExecutorFactory+rust NOT in ci-base — content recovered via rebuild loop
         tier: feature
         description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/add-executor-factory
-        enabled: false  # RETIRED 2026-06-05: superseded — executor_factory.py already on ci-base; parent executor-mixins also retired
+        enabled: true  # re-enabled 2026-06-18 alongside parent executor-mixins: same lost-promotion reason (db3641c54 lost in seed-v2 reseed)
         tier: feature
         description: "ExecutorFactory with decorator-based registration for all 8 executors"
         permanent: false
         disable_when_in_development: true
         parent: _for_bleed/executor-mixins
 
-      - name: _for_bleed/add-update-executor-action
-        enabled: false  # RETIRED 2026-06-05: superseded — UpdateExecutorAction already on ci-base (executor_actions.py:44)
-        tier: feature
-        description: "UpdateExecutorAction framework + controller volatility dispatch for progressive executor"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_bleed/environment
-        enabled: false  # RETIRED 2026-06-05: zero unique content vs ci-base after rebase onto origin/ci-base; injective-py pip→conda migration intent unfulfilled, recreate fresh branch if still wanted
-        tier: feature
-        description: "Environment and dependency fixes (injective-py, pip_packages)"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/add-update-executor-action: RETIRED 2026-07-05 — UpdateExecutorAction already on ci-base (executor_actions.py:44); local+origin deleted, entry purged
 
       # --- Bleeding-edge-only patches ---
 
       - name: _for_bleed/add-executor-lock-unlock-collateral
         enabled: true
+        base: ci-base
         tier: feature
         description: "Lock/Unlock collateral for executor"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/candles-public-api
-        enabled: true
-        tier: feature
-        description: "Public API for CandlesBase + hb-candles-feed package integration with native fallback"
-        permanent: false
-        disable_when_in_development: true
-
       - name: _for_bleed/security-foxbit-eval-and-pickle
         enabled: true
+        base: ci-base
         tier: feature
         description: "Security: foxbit eval() on WebSocket data (3 sites) and pickle.loads() on remote HTTP body removal"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/expand-subpackage-compat-check
-        enabled: true
-        tier: infrastructure
-        description: "CI: expand check_subpackage_compat.py to gate all 14 sub-packages + install-subpackages fix"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/expand-subpackage-compat-check: PROMOTED to ci-base (2026-06-11)
+      # ci/check_subpackage_compat.py and install-subpackages (all 14) now owned by ci-base.
 
       - name: _for_bleed/progressive-executor-trading-v2
         enabled: true
+        base: ci-base
         tier: feature
-        description: "ProgressiveExecutor feature v2 - depends on executor_base & controller interfaces"
+        parent: _for_bleed/executor-mixins
+        description: "ProgressiveExecutor feature v2 - depends on executor_base & controller interfaces. 2026-07-05: merged executor-mixins in (provides strategy_v2/utils/trailing_stop_manager.py) so standalone CI collects; declared parent executor-mixins."
         permanent: false
         disable_when_in_development: true
         interface_monitor: true
@@ -243,53 +376,33 @@ target_branches:
       # _for_bleed/pixi-workspace: PROMOTED to ci-base (2026-04-19)
       # CI workflow, .gitmodules, .gitignore now owned by ci-base.
 
+      # _for_bleed/strategy-framework: MOVED to modular.tracked_branches (2026-06-14); MOVED BACK to bleeding-edge (2026-06-15)
       - name: _for_bleed/strategy-framework
         enabled: true
+        base: modular
         tier: feature
-        description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter"
+        description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter. Regenerated 2026-07-05 off clean modular (4 files, commit 848296b3) to shed bundled wiring; base:modular because it consumes sub-packages."
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/web-assistant-extraction
-        enabled: false  # RETIRED 2026-06-05: obsolete — superseded by web-assistant-migration batches 1-5 (already noted OBSOLETE in earlier docs)
-        tier: feature
-        description: "OBSOLETE: PR 3b soft-migration approach superseded by hard migration in batches 1-5. install-subpackages addition salvaged to ci-base directly."
-        permanent: false
-        disable_when_in_development: true
+      # MOVED 2026-06-14 to modular.tracked_branches (Step D-C reclassification): _for_bleed/web-assistant
+      # MOVED BACK 2026-06-15 from modular.tracked_branches: feature belongs in bleeding-edge
+      # _for_bleed/web-assistant: RETIRED 2026-07-05 — superseded by modular-wiring web_assistant cutover + api_throttler absorbed; local+origin deleted, entry purged
 
-      # Async-utils sub-package extraction
-      - name: _for_bleed/async-utils-migration
-        enabled: false  # SUPERSEDED 2026-06-09: content already merged into ci-base via _for_ci/fix-trading-pair-fetcher-async-utils-import (132 consumer files migrated, source hummingbot/core/utils/async_utils.py deleted). Branch is now a no-op merge.
-        tier: feature
-        description: "Async-utils sub-package extraction: 4-batch consumer migration + Phase 4 source deletion — SUPERSEDED 2026-06-09: content already merged into ci-base via _for_ci/fix-trading-pair-fetcher-async-utils-import (132 consumer files migrated, source hummingbot/core/utils/async_utils.py deleted). Branch is now a no-op merge."
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/web-assistant-extraction: RETIRED 2026-07-05 — obsolete soft-migration superseded by batches 1-5; local+origin deleted, entry purged
 
-      # Connector-utils sub-package extraction Phase 5 (single-commit corrected shim)
-      - name: _for_bleed/connector-utils-split
-        enabled: false  # RETIRED 2026-06-05: superseded — connector/utils.py already replaced with sub-package shim on ci-base
-        tier: feature
-        description: "Phase 5 of MementoRC/hb-connector-utils#1: delegate 5 pure helpers to connector_utils sub-package via re-export + nonce-injection shim wrappers. Processors kept INLINE (not moved to core/web_assistant/). Coordinates with web-assistant migration batch-5-shim-removal. Merged LAST (after batch-5-shim-removal and async-utils-migration) because import additions are additive on the post-migration canonical state."
-        permanent: false
-        disable_when_in_development: false
-        local_only: false
+      # _for_bleed/async-utils-migration: RETIRED 2026-07-05 — content merged into ci-base via _for_ci/fix-trading-pair-fetcher-async-utils-import (no branch ref existed); entry purged
+
+      # _for_bleed/connector-utils-split: RETIRED 2026-07-05 — connector/utils.py already replaced with sub-package shim on ci-base; local+origin deleted, entry purged
 
       # _for_bleed/market-simulator: REMOVED (2026-04-05)
       # Replaced by hb-market-simulator submodule via _for_bleed/pixi-workspace
 
-      - name: _for_bleed/rust-integration
-        enabled: true
-        tier: feature
-        description: "Rust extension crate: hummingbot/rust/, fallback wrappers (rust_metrics.py, order_expiration_entry_rust.py), and tests"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/rust-integration: MOVED 2026-07-09 to accelerated.tracked_branches — compiled-extension
+      # optimization work relocates to the new accelerated tier so bleeding-edge stays pure-Python.
+      # Branch content itself untouched; only this tracking entry moved.
 
-      - name: _for_bleed/augmented-pure-python
-        enabled: true
-        tier: feature
-        description: "Cython-to-Augmented-Pure-Python framework: skill, docs, .gitignore for skills"
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/augmented-pure-python: RETIRED 2026-07-05 — only unique content was 1 doc file, folded to ci-base as _for_ci/augmented-docs (skill/.gitignore already on ci-base); local+origin deleted, entry retired
 
       # _for_bleed/cython-framework-subpackage: REMOVED (2026-04-05)
       # Replaced by hb-cython-framework submodule via _for_bleed/pixi-workspace
@@ -297,8 +410,9 @@ target_branches:
       # _for_bleed/patch-passwd-haskey-tests: CONSOLIDATED into ci-and-testing (2026-04-16)
       # _for_bleed/convert-to-pytest: CONSOLIDATED into ci-and-testing (2026-04-16)
 
+      # _for_bleed/add-new-order-types: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder. RE-ENABLED 2026-06-18: promotion c83247374 LOST in seed-v2 reseed; content recovered via rebuild loop.
       - name: _for_bleed/add-new-order-types
-        enabled: true
+        enabled: true  # re-enabled 2026-06-18: promotion c83247374 LOST in seed-v2 reseed; OrderType STOP_LOSS/TP/TS enum + delayed_market_order.py NOT in ci-base — recovered via rebuild loop. Hub for kraken-new-order-types + position-exchange-executor.
         tier: feature
         description: "Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder"
         permanent: false
@@ -306,14 +420,16 @@ target_branches:
 
       - name: _for_bleed/kraken-new-order-types
         enabled: true
+        base: ci-base
+        parent: _for_bleed/add-new-order-types  # re-added 2026-06-18: hub demoted from ci-base (promotion c83247374 dropped in reseed), so explicit parent ordering required again
         tier: feature
         description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop)"
         permanent: false
         disable_when_in_development: true
-        parent: _for_bleed/add-new-order-types
 
       - name: _for_bleed/logger-callback-refactor
         enabled: true
+        base: ci-base
         tier: feature
         description: "Phase 0 of MementoRC/hb-logger#1 extraction: replace deferred HummingbotApplication imports in HummingbotLogger.notify/network with callback registration pattern (register_notify_handler / register_network_handler classmethods) to break the logger->application circular dependency."
         permanent: false
@@ -321,6 +437,7 @@ target_branches:
 
       - name: _for_bleed/logger-type-cleanup
         enabled: true
+        base: ci-base
         tier: feature
         description: "Clean up 6 pre-existing type defects in hummingbot/logger (StreamHandler[str], TracebackType None guard, findCaller tuple annotation, log_encoder signature, dataclass instance guard, _log args tuple). Lets hb-logger sub-package drop the matching disable_error_code suppressions. Builds on _for_bleed/logger-callback-refactor."
         permanent: false
@@ -329,27 +446,32 @@ target_branches:
 
       - name: _for_bleed/dedupe-hummingbot-logger
         enabled: true
+        base: ci-base
         tier: feature
         description: "Dedupe HummingbotLogger: replaces hummingbot/logger/{__init__,logger}.py with re-export shims importing from the canonical `logger` sub-package. Fixes MementoRC/hb-logger#9 (dual-import isinstance failure). Progresses MementoRC/hb-logger#1 Phase 5 partial. Parent-chained after logger-type-cleanup so the shim cleanly overwrites prior callback/type changes; runtime behavior preserved by sub-package."
         permanent: false
         disable_when_in_development: true
         parent: _for_bleed/logger-type-cleanup
 
+      # _for_bleed/position-exchange-executor: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. RE-ENABLED 2026-06-18: same lost-promotion c83247374 (seed-v2 reseed); recovered via rebuild loop.
       - name: _for_bleed/position-exchange-executor
-        enabled: true
+        enabled: true  # re-enabled 2026-06-18 with hub add-new-order-types: same lost-promotion c83247374 (seed-v2 reseed); position_on_exchange_executor/ absent from ci-base — recovered via rebuild loop.
         tier: feature
-        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders"
+        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. 2026-07-05: merged add-executor-factory in (provides strategy_v2/executors/executor_factory.py) so standalone CI collects; diamond dep (needs both kraken-new-order-types parent AND add-executor-factory)."
         permanent: false
         disable_when_in_development: true
-        parent: _for_bleed/add-new-order-types
+        parent: _for_bleed/kraken-new-order-types
+        last_reviewed: "2026-06-13"
 
       # hb-event-bus parity: 10-branch Cython migration suite
       # orderbook is the Cython cimport unblocker (must land first).
       # The other 9 depend on orderbook landing and becoming available as a cimport source.
       # NOTE: All 10 parity branches have been superseded by _for_bleed/hb-event-bus (consolidation).
 
+      # MOVED BACK 2026-06-15 from modular.tracked_branches: feature belongs in bleeding-edge
       - name: _for_bleed/hb-event-bus
-        enabled: true
+        enabled: false  # DISABLED 2026-06-29: incomplete pubsub cutover. Commit 902951729 deleted hummingbot/core/pubsub.pxd + pubsub.pyx but connector_base.pyx (and possibly other .pyx) still `cimport PubSub` from it, breaking the bleeding-edge `pixi run -e ci build` (connector_base.cpp -> fatal error: cpp/PyRef.h). ci-base still has the .pxd so it builds green. Disabled to unblock the rebuild (bleeding-edge + -pr snapshots push green). RE-ENABLE after completing the cimport migration off the deleted Cython PubSub on the branch.
+        base: modular
         tier: feature
         description: "Consolidated event-bus bridge + conftest + 10 parity test suites; bumps event-bus submodule. Supersedes the 10 hb-event-bus-parity-* branches (now disabled)."
         permanent: false
@@ -357,84 +479,11 @@ target_branches:
         last_reviewed: "2026-06-09"
         # re-enabled 2026-06-09 — parallel infrastructure work blocker cleared; branch passes CI on origin (411bae0527). DO NOT refresh against ci-base before rebuild — ci-base currently failing CI.
 
-      - name: _for_bleed/hb-event-bus-parity-orderbook
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/data_type/order_book.pyx consumer to hb-event-bus (Cython cimport unblocker — must land first)"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_bleed/hb-event-bus-parity-connector-base
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/connector/connector_base.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-event-forwarder
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/event/event_forwarder.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-event-listener
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/event/event_listener.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-event-logger
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/event/event_logger.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-event-reporter
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/event/event_reporter.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-paper-trade
-        enabled: false
-        tier: feature
-        description: "Migrate paper-trade connector to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-strategy-base
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/strategy/strategy_base.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-time-iterator
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/time_iterator.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
-
-      - name: _for_bleed/hb-event-bus-parity-trading-intensity
-        enabled: false
-        tier: feature
-        description: "Migrate hummingbot/core/data_type/trading_intensity_indicator.pyx to hb-event-bus"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/hb-event-bus-parity-orderbook
+      # _for_bleed/hb-event-bus-parity-* (10 variants): RETIRED 2026-06-11 — exploration siblings
+      # superseded by _for_bleed/hb-event-bus (consolidated). Variant suffixes: connector-base,
+      # event-forwarder, event-listener, event-logger, event-reporter, orderbook, paper-trade,
+      # strategy-base, time-iterator, trading-intensity. No physical refs ever existed for any
+      # variant; YAML metadata cleanup only.
 
       - name: _for_bleed/limit-order-pure-python
         enabled: false
@@ -464,16 +513,40 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/remove-conda-setup
-        enabled: true
+      # _for_bleed/remove-conda-setup: PROMOTED to ci-base 2026-06-12 (SHA 447d577dad41a6ba24f8ff4dc8ada32ced8e95bb) — chore: remove conda-era install artifacts. Source was recurring-rebase-incompatible due to setup/*.yml merge=ours rule which the same commit removes; promotion eliminates the conflict permanently
+
+      # _for_bleed_manual/kraken-tweaks: RETIRED 2026-07-05 — absorbed into development (verified zero-diff); local+origin deleted, entry purged
+
+      # _for_bleed/revert-mqtt-commlib: REROUTED 2026-06-16 → _for_ci/revert-mqtt-commlib (ci-base layer fix, not a feature)
+
+      # _for_bleed/test-coverage: PROMOTED 2026-07-05 to ci-base tier as _for_ci/test-coverage (test-only content); origin deleted, entry moved to ci-base.tracked_branches
+
+  accelerated:
+    # Compiled-extension optimization layer above bleeding-edge (Rust, Cython).
+    # Keeps bleeding-edge purely pure-Python; accelerated is where compiled-extension
+    # work lands. Built the same way bleeding-edge is built from modular: fresh branch
+    # checked out from the parent tier's tip, tracked_branches merged on top, quality
+    # gate (plus compile-gate steps unique to this tier) run, then pushed.
+    # Base branch: bleeding-edge.
+    base_branch: bleeding-edge
+
+    tracked_branches:
+      # NOTE: both entries below are enabled: false — the branches do not exist yet
+      # (follow-up work, not yet authored). Tracked-branch entries pointing at
+      # non-existent refs cause daily "Branch does not exist" cron log spam (see
+      # documented incidents on _for_ci/* retirements above). Flip to enabled: true
+      # once the corresponding branch actually exists.
+
+      - name: _for_accel/rust-accelerators
+        enabled: true   # Flipped 2026-07-09: branch created and pushed to origin, contains same content as former _for_bleed/rust-integration
         tier: feature
-        description: "Remove conda-era install artifacts (setup/, Makefile, install); migrate Dockerfile from miniconda3 to pixi. Eliminates env-drift bugs."
+        description: "In-tree hummingbot/rust/ crate + fallback wrappers, relocated/rebased from _for_bleed/rust-integration"
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed_manual/kraken-tweaks
-        enabled: false  # RETIRED 2026-06-05: absorbed — branch content already in development (verified zero-diff)
+      - name: _for_accel/cython-framework
+        enabled: false   # IMPORTANT: false, not true — branch does not exist yet (follow-up work), avoid cron "Branch does not exist" spam
         tier: feature
-        description: "Kraken order status handling and startup cleanup"
+        description: "Cython-annotated augmented-pure-python modules (fresh branch, authored as follow-up work)"
         permanent: false
-        disable_when_in_development: false
+        disable_when_in_development: true

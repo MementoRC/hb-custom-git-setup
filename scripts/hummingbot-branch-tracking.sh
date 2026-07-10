@@ -321,6 +321,67 @@ PYEOF
 }
 
 ###############################################################################
+# Pin aiomqtt transport from upstream
+# ------------------------------------
+# Force the remote_iface MQTT transport to upstream's aiomqtt implementation,
+# overriding any commlib version dragged in via branch ancestry (strip-aiomqtt-seed).
+# Called once per tier after all merges for that tier are complete and before push.
+###############################################################################
+pin_aiomqtt_transport() {
+    # Force the remote_iface MQTT transport to upstream's aiomqtt implementation,
+    # overriding any commlib version dragged in via branch ancestry (strip-aiomqtt-seed).
+    local tier="$1"
+    local transport_files=(
+        "hummingbot/remote_iface/mqtt.py"
+        "hummingbot/remote_iface/messages.py"
+        "hummingbot/client/command/mqtt_command.py"
+        "test/hummingbot/client/command/test_mqtt_command.py"
+        "test/hummingbot/remote_iface/test_mqtt.py"
+        "test/mock/mock_mqtt_server.py"
+    )
+    echo "[pin-aiomqtt] Pinning remote_iface transport from origin/development (tier: ${tier})"
+    git checkout origin/development -- "${transport_files[@]}" 2>/dev/null || {
+        echo "[pin-aiomqtt] WARNING: checkout of one or more transport files from origin/development failed (tier: ${tier})"
+    }
+
+    # Ruff-format the pinned files before staging so they are ci-base-clean
+    # regardless of which tier calls this function.  Mirrors the self-contained
+    # ruff detection used by the final-ruff-normalization block in sync_base_branch:
+    # prefer PATH ruff, fall back to pixi env.  All invocations are non-fatal (|| true)
+    # since the tier's own format pass is a backstop.
+    local _pin_ruff_cmd=""
+    if command -v ruff &> /dev/null; then
+        _pin_ruff_cmd="ruff"
+    elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+        _pin_ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+    fi
+    if [ -n "$_pin_ruff_cmd" ]; then
+        "$_pin_ruff_cmd" format "${transport_files[@]}" >& /dev/null || true
+        "$_pin_ruff_cmd" check --select I --fix "${transport_files[@]}" >& /dev/null || true
+        "$_pin_ruff_cmd" check --fix "${transport_files[@]}" >& /dev/null || true
+    else
+        echo "[pin-aiomqtt] WARNING: ruff not found — transport files pinned but not ruff-formatted (tier: ${tier})"
+    fi
+
+    # commlib-py and aiomqtt are mutually exclusive (commlib-py needs paho-mqtt <2,
+    # aiomqtt needs paho-mqtt >=2.1). The aiomqtt transport makes commlib-py unused in
+    # the parent, but dragger branches re-add commlib-py>=0.13.2 via merge, which makes
+    # pixi lock unsolvable. Strip it from the parent pixi deps so the lock re-solves.
+    if [ -f pyproject.toml ]; then
+        sed -i '/^commlib-py[[:space:]]*=/d' pyproject.toml
+    fi
+
+    git add "${transport_files[@]}" pyproject.toml 2>/dev/null || true
+    if git diff --cached --quiet; then
+        echo "[pin-aiomqtt] transport already matches upstream aiomqtt (tier: ${tier}); no pin commit needed"
+    else
+        git commit -S --no-verify -m "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" \
+            -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin."
+        echo "[pin-aiomqtt] committed aiomqtt transport pin (tier: ${tier})"
+    fi
+}
+
+###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
 # Starts ci-base from the ci-base-seed-v1 tag (a fixed, GPG-signed snapshot
@@ -666,6 +727,10 @@ PYEOF
         log_warning "ruff not found — skipping final normalization"
     fi
 
+    # Pin aiomqtt transport after all _for_ci/* merges and format passes are done.
+    # This overrides any commlib version of mqtt.py dragged in by branch ancestry.
+    pin_aiomqtt_transport "ci-base"
+
     log_result true "Base branch synced"
     return 0
 }
@@ -768,7 +833,44 @@ sync_modular_branch() {
         return 1
     }
 
+    # Pin aiomqtt transport after all modular tracked-branch merges are done.
+    # This overrides any commlib version of mqtt.py dragged in by branch ancestry.
+    pin_aiomqtt_transport "modular"
+
     log_result true "$modular_branch sync complete"
+    return 0
+}
+
+###############################################################################
+# Accelerated Branch Sync
+# ------------------------
+# Compiled-extension optimization tier above bleeding-edge (Rust, Cython).
+# Mirrors the bleeding-edge init pattern inline in main() (branch -D + checkout -b
+# from the parent tier's CURRENT LOCAL tip, then an empty init commit). Merging
+# accelerated.tracked_branches is intentionally NOT done here — same as
+# bleeding-edge, that happens via the generic sync_branch() loop over
+# get_target_branches() in main() (accelerated is just another key under
+# target_branches, so it is picked up automatically once this branch exists).
+# Only called during --rebuild, immediately after the bleeding-edge init/sync
+# step and before the generic tracked-branch loop / final push loop.
+###############################################################################
+sync_accelerated_branch() {
+    local accelerated_branch="$1"
+    local base_branch="$2"
+
+    log_operation "Create $accelerated_branch from $base_branch"
+    git_quiet checkout "$base_branch"
+    git_quiet branch -D "$accelerated_branch" >& /dev/null
+    git_quiet checkout -b "$accelerated_branch"
+
+    # Ensure the new branch is properly initialized (mirrors bleeding-edge init in main()).
+    log_operation "Initialize $accelerated_branch branch"
+    git -c commit.gpgsign=false commit --allow-empty --no-verify -m "Initialize $accelerated_branch" >& /dev/null || {
+        log_error "Failed to initialize $accelerated_branch branch"
+        return 1
+    }
+
+    log_result true "$accelerated_branch created from $base_branch"
     return 0
 }
 
@@ -842,12 +944,23 @@ merge_for_modular_branches() {
                 git checkout --theirs "$f" 2>/dev/null
                 git add "$f"
             done
-            git commit --no-verify --no-edit >& /dev/null || {
-                log_error "Failed to commit format-only conflict resolution for $branch"
+            if git diff --cached --quiet; then
+                # Resolution netted to a no-op: the branch's content is already present
+                # in the base being built. Typical for an absorbed disable_when_in_development
+                # branch whose ci-base ancestry hides the absorption from the auto-disable
+                # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
+                # and — without this guard — abort the whole rebuild. Abort the in-progress
+                # merge and move on: the base already has the content.
                 git merge --abort >& /dev/null
-                return 1
-            }
-            log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                log_result true "$branch content already present — no-op, skipped"
+            else
+                git commit --no-verify --no-edit >& /dev/null || {
+                    log_error "Failed to commit format-only conflict resolution for $branch"
+                    git merge --abort >& /dev/null
+                    return 1
+                }
+                log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+            fi
         fi
     done < <(echo "$modular_branches")
 
@@ -924,12 +1037,23 @@ merge_for_ci_branches() {
                 git checkout --theirs "$f" 2>/dev/null
                 git add "$f"
             done
-            git commit --no-verify --no-edit >& /dev/null || {
-                log_error "Failed to commit format-only conflict resolution for $branch"
+            if git diff --cached --quiet; then
+                # Resolution netted to a no-op: the branch's content is already present
+                # in the base being built. Typical for an absorbed disable_when_in_development
+                # branch whose ci-base ancestry hides the absorption from the auto-disable
+                # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
+                # and — without this guard — abort the whole rebuild. Abort the in-progress
+                # merge and move on: the base already has the content.
                 git merge --abort >& /dev/null
-                return 1
-            }
-            log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                log_result true "$branch content already present — no-op, skipped"
+            else
+                git commit --no-verify --no-edit >& /dev/null || {
+                    log_error "Failed to commit format-only conflict resolution for $branch"
+                    git merge --abort >& /dev/null
+                    return 1
+                }
+                log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+            fi
         fi
     done < <(echo "$for_ci_branches")
 
@@ -1162,6 +1286,18 @@ run_tests() {
         2)
             # Escape hatch: run full suite
             log_step "Selector emitted escape-hatch (exit 2); running full pixi pytest suite"
+            # Rebuild Cython extensions first, in the SAME default env pytest uses
+            # below, so the full suite never imports a stale .so from a prior tree.
+            # A merged branch that changed a .pyx/.pxd otherwise surfaces as spurious
+            # "size changed, may indicate binary incompatibility" collection errors
+            # across the whole suite. `pixi run pytest` bypasses the `test` task's
+            # build dependency, so the rebuild must be explicit here.
+            local build_log="${pytest_log%.log}_build.log"
+            log_step "Rebuilding Cython extensions before full suite (pixi run build)"
+            if ! (cd "$REPO_PATH" && pixi run build) > "$build_log" 2>&1; then
+                log_result false "Cython build FAILED before full suite; see $build_log"
+                return 1
+            fi
             (cd "$REPO_PATH" && pixi run pytest -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
@@ -1550,6 +1686,12 @@ main() {
       exit 1
   }
 
+  # Remove stale git lock files left by crashed/killed processes
+  for _lock in .git/index.lock .git/MERGE_HEAD .git/CHERRY_PICK_HEAD .git/REBASE_HEAD; do
+      [ -f "$_lock" ] && { echo "[rebuild] Removing stale lock: $_lock"; rm -f "$_lock"; }
+  done
+  unset _lock
+
   # Validate environment
   if ! validate_environment; then
       log_error "Environment validation failed."
@@ -1625,6 +1767,17 @@ main() {
           log_error "Failed to initialize feature branch"
           exit 1
       }
+
+      # Step 3: create the accelerated tier from FEATURE_BRANCH (bleeding-edge) tip.
+      # Mirrors the FEATURE_BRANCH init above; accelerated.tracked_branches merge
+      # happens later via the generic sync_branch() loop over get_target_branches().
+      if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+          sync_accelerated_branch "accelerated" "$FEATURE_BRANCH" || {
+              log_error "accelerated branch init failed — rebuild aborted"
+              exit 1
+          }
+      fi
+
       log_result true "Rebuild complete"
   fi
 
@@ -1674,6 +1827,11 @@ main() {
       INDENT_LEVEL=$loop_indent
 
   done < <(get_target_branches)
+
+  # Pin aiomqtt transport after all _for_bleed/* branch merges are done,
+  # before the final format pass. This overrides any commlib version of mqtt.py
+  # dragged in by branch ancestry into bleeding-edge.
+  pin_aiomqtt_transport "bleeding-edge"
 
   # Final format pass — merges can produce unformatted results even when
   # individual branches are clean (e.g. merge conflict resolution artifacts
@@ -1757,6 +1915,10 @@ main() {
   # any failure: branches left built-but-unpushed, exit 1 so cron/operator sees it,
   # ci-base-pr NOT refreshed. NOTE: full build+test per branch is intentionally
   # expensive — correctness over speed, per requirement.
+  # accelerated (when declared) is gated LAST, after ci-base/modular/bleeding-edge
+  # have already gated green and pushed within this same loop — a compile-gate
+  # (cargo build / build_ext) or quality/test failure on accelerated only halts
+  # further iterations, it does NOT block or un-push the earlier tiers.
   # ----------------------------------------------------------------------------
   log_section "Pre-push CI gate (quality + tests, CI-identical)"
   local _pixi_cmd="" _gate_branch _changed _q_ok
@@ -1782,10 +1944,23 @@ main() {
       --ignore=test/hummingbot/strategy/cross_exchange_market_making/
   )
 
-  for _gate_branch in "ci-base" "modular" "$FEATURE_BRANCH"; do
+  # accelerated is gated LAST, after ci-base/modular/$FEATURE_BRANCH have already
+  # been gated + pushed inside this same loop. This ordering IS the isolation
+  # mechanism: a `break` triggered by an accelerated-only failure (quality/tests/
+  # compile-gate) only stops further iterations — it cannot un-push a tier that
+  # already gated green and pushed earlier in the loop. Only add "accelerated" to
+  # the loop if the tier is actually declared in the YAML (keeps this script
+  # working unmodified against older configs without the tier).
+  local -a _gate_branches=("ci-base" "modular" "$FEATURE_BRANCH")
+  if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+      _gate_branches+=("accelerated")
+  fi
+
+  for _gate_branch in "${_gate_branches[@]}"; do
       log_step "Gating $_gate_branch (quality + tests)"
       if ! git -C "$REPO_PATH" checkout "$_gate_branch" >& /dev/null; then
           log_error "  checkout $_gate_branch failed — aborting gate"
+          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
 
@@ -1812,43 +1987,115 @@ main() {
       fi
       if [ "$_q_ok" != true ]; then
           log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check"
+          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
       log_detail "  quality: pass"
 
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& /dev/null; then
-          log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build"
+      if [ "$_gate_branch" = "ci-base" ]; then
+          # ci-base owns the canonical solve: pixi.lock is merge-contested (a stale branch
+          # lock can drop newly-added deps like aiomqtt), so re-solve from the merged pyproject.
+          echo "[lock-resolve] re-solving pixi.lock from merged pyproject for $_gate_branch"
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
+              log_error "  Lock regen FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi lock — see $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+      else
+          # modular / bleeding-edge: reuse ci-base's canonical re-solved lock. The
+          # [tool.pixi.dependencies] blocks are identical across all three tiers, so an
+          # independent re-solve here only introduces version drift (different transitive
+          # picks -> non-deterministic tier failures) and costs an extra full conda solve.
+          echo "[lock-resolve] pinning pixi.lock from ci-base for $_gate_branch (identical deps; avoids drift)"
+          if ! ( cd "$REPO_PATH" && git checkout ci-base -- pixi.lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
+              log_error "  Lock pin from ci-base FAILED on $_gate_branch — NOT pushing. See $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+      fi
+      ( cd "$REPO_PATH" && git add pixi.lock && { git diff --cached --quiet || git commit -S --no-verify -m "chore(lock): pin pixi.lock ($_gate_branch)"; } )
+
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& "$RUN_LOG_DIR/gate_build_${_gate_branch}.log"; then
+          log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build — see $RUN_LOG_DIR/gate_build_${_gate_branch}.log"
+          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci coverage run -m pytest "${_pytest_ignores[@]}" ) >& /dev/null; then
-          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci coverage run -m pytest ${_pytest_ignores[*]}"
+      if ! ( cd "$REPO_PATH" && COVERAGE_FILE="$RUN_LOG_DIR/.coverage_${_gate_branch}" "$_pixi_cmd" run --frozen -e ci coverage run -m pytest "${_pytest_ignores[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
+          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci coverage run -m pytest ${_pytest_ignores[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
+          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
       log_detail "  tests: pass"
 
+      # Compile-gate: accelerated tier ONLY. Rust cargo build + Cython build_ext
+      # must both succeed before accelerated is pushed. A failure here aborts the
+      # push for accelerated ONLY (via the same _gate_failed=true; break as every
+      # other gate step above) — it does NOT retroactively un-push ci-base/modular/
+      # $FEATURE_BRANCH, which already gated green and pushed earlier in this loop.
+      if [ "$_gate_branch" = "accelerated" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml ) >& "$RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (cargo build) — NOT pushing. Inspect: cd $REPO_PATH && $_pixi_cmd run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml — see $RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python setup.py build_ext --inplace ) >& "$RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (build_ext) — NOT pushing. Inspect: cd $REPO_PATH && python setup.py build_ext --inplace — see $RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          log_detail "  compile: pass (cargo build + build_ext)"
+      fi
+
       if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
           _pushed+=("$_gate_branch")
           log_result true "$_gate_branch gated green + pushed"
+          # Refresh this layer's squashed single-commit review snapshot right
+          # after it is pushed green, so each <branch>-pr reflects the latest
+          # green tree even if a LATER branch in the loop fails its gate.
+          # Checkout-safe: regenerate scripts use commit-tree + refspec push and
+          # never touch HEAD or the working tree.
+          _pr_script="$(dirname "${BASH_SOURCE[0]}")/regenerate-${_gate_branch}-pr.sh"
+          # [ -f ] not [ -x ]: invoked via `bash <script>`, which does not require the
+          # execute bit (chmod +x is not reliably available in the rebuild environment).
+          if [ -f "$_pr_script" ] && bash "$_pr_script" "$REPO_PATH" >& /dev/null; then
+              log_result true "regenerated + pushed ${_gate_branch}-pr (green)"
+          else
+              log_error "  ${_gate_branch}-pr NOT refreshed (regenerate-${_gate_branch}-pr.sh missing or failed) — run it manually"
+          fi
       else
           log_error "  push FAILED for $_gate_branch (gates passed) — run: git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
+          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
   done
 
   if [ "$_gate_failed" = true ]; then
-      log_error "Pre-push gate halted. Pushed: [${_pushed[*]:-none}]. Remaining branches built locally but NOT pushed. ci-base-pr NOT refreshed. Fix the failures and re-run."
+      log_error "Pre-push gate halted. Pushed: [${_pushed[*]:-none}]. Remaining branches built locally but NOT pushed. Per-layer <branch>-pr snapshots were refreshed for pushed layers only. Fix the failures and re-run."
       exit 1
   fi
 
-  # All outputs verified green + pushed -> refresh the squashed ci-base-pr snapshot
-  # (regenerate-ci-base-pr.sh reads origin/ci-base^{tree}, now freshly pushed + green;
-  # MUST run after the ci-base push). Checkout-safe (refspec push via commit-tree).
-  local _regen_script="$(dirname "${BASH_SOURCE[0]}")/regenerate-ci-base-pr.sh"
-  if [ -x "$_regen_script" ] && bash "$_regen_script" "$REPO_PATH" >& /dev/null; then
-      log_result true "regenerated + pushed ci-base-pr (green)"
-  else
-      log_error "ci-base-pr NOT refreshed (regenerate-ci-base-pr.sh missing or failed) — run it manually"
+  # All gated layers (ci-base, modular, $FEATURE_BRANCH, and accelerated when
+  # declared) passed green + pushed. Mark run as all-green and prune old green runs.
+  touch "$RUN_LOG_DIR/.gate_all_green"
+
+  # Retention: keep the newest N green run dirs; never delete a run dir with a failure marker.
+  KEEP_GREEN="${KEEP_GREEN:-5}"
+  if [ -d "${LOG_PATH}/runs" ]; then
+    # list green run dirs newest-first, skip the newest KEEP_GREEN, delete the rest;
+    # never touch dirs that lack .gate_all_green or that have .gate_failed
+    ls -1dt "${LOG_PATH}/runs"/*/ 2>/dev/null | while read -r _d; do
+      [ "$(basename "${_d%/}")" = "latest" ] && continue   # never prune the 'latest' symlink / its target
+      [ -L "${_d%/}" ] && continue                          # skip any symlink-to-dir in runs/
+      [ -e "${_d}.gate_all_green" ] || continue      # only green dirs are prune-eligible
+      [ -e "${_d}.gate_failed" ] && continue         # belt-and-suspenders: never delete a failed run
+      echo "$_d"
+    done | tail -n +$((KEEP_GREEN + 1)) | while read -r _old; do [ -L "${_old%/}" ] && continue; rm -rf "$_old"; done
   fi
+
+  # All gated layers pushed. Each <branch>-pr snapshot (ci-base-pr, modular-pr,
+  # bleeding-edge-pr, and accelerated-pr when the tier is declared) was refreshed
+  # in-loop immediately after its own push — see the regenerate-${_gate_branch}-pr.sh
+  # hook in the gate loop above.
 }
 
 main "$@"

@@ -2,3 +2,6 @@ logs/
 scripts/.tmp/
 *.log
 configs/test_history.json
+ai_docs/
+scripts/__pycache__/
+state/

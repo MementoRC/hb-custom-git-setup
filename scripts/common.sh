@@ -22,6 +22,15 @@
 : "${TEST_LOG:=$LOG_PATH/test_verification.log}"
 : "${STATUS_LOG:=$LOG_PATH/branch_status.log}"
 
+# Run-scoped log grouping: inherit RUN_ID from a parent invocation (cron wrapper) if exported,
+# else generate one. All logs for a single rebuild/cron invocation accumulate under this dir.
+RUN_ID="${RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+export RUN_ID
+RUN_LOG_DIR="${LOG_PATH}/runs/${RUN_ID}"
+export RUN_LOG_DIR
+mkdir -p "$RUN_LOG_DIR"
+ln -sfn "$RUN_LOG_DIR" "${LOG_PATH}/runs/latest"
+
 ###############################################################################
 # 2) PATH Configuration for Cron Environments
 ###############################################################################
@@ -420,6 +429,9 @@ EOF
 
     echo "" >> "$target_file"
     echo "Log: ${log_path}" >> "$target_file"
+
+    # Also copy the summary into the run-scoped log dir for per-run retention.
+    cp -f "$target_file" "$RUN_LOG_DIR/summary.txt" 2>/dev/null || true
 }
 
 ###############################################################################
