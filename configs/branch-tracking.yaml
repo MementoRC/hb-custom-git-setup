@@ -52,6 +52,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/ignore-rust-artifacts
+        enabled: true
+        tier: infrastructure
+        description: "Gitignore hummingbot/rust/ build artifacts (target/ dir + Cargo.lock). Untracked build outputs that appeared in git status on every tier and triggered repeated 'working directory not clean' cron aborts. Neither path is tracked on development (no hummingbot/rust/) nor committed on the accelerated tier, so the ignore shadows no tracked source. Class-P hygiene — fold into the next seed re-cut, then retire. Branch off origin/development, commit 95db7e8a, GPG-signed. Added 2026-07-11."
+        permanent: false
+        disable_when_in_development: false
+
       # _for_ci/revert-mqtt-commlib: RETIRED 2026-07-05 — superseded by _for_ci/strip-aiomqtt-seed (validated); local+origin deleted, entry purged
 
       # DISABLED 2026-07-06: aiomqtt now on conda-forge (2.5.1) — reverting to upstream's aiomqtt transport (PR #8293).
