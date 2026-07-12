@@ -59,6 +59,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/fix-bitget-limit-maker-order-type
+        enabled: true
+        tier: infrastructure
+        description: "Class-S seed-fallout restore: the ci-base seed py312 transform dropped OrderType.LIMIT_MAKER from bitget_perpetual_derivative.supported_order_types() (ci-base returned [LIMIT, MARKET] vs development's [LIMIT, LIMIT_MAKER, MARKET]), failing test_supported_order_types + test_create_limit_maker_order_sends_post_only on the ci-base test gate. One-line source restore, commit fc6d4a0b, GPG-signed, based off origin/ci-base so it wins the rebuild 3-way merge. Added 2026-07-11."
+        permanent: false
+        disable_when_in_development: false
+
       # _for_ci/revert-mqtt-commlib: RETIRED 2026-07-05 — superseded by _for_ci/strip-aiomqtt-seed (validated); local+origin deleted, entry purged
 
       # DISABLED 2026-07-06: aiomqtt now on conda-forge (2.5.1) — reverting to upstream's aiomqtt transport (PR #8293).
