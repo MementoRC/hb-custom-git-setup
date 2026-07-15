@@ -564,3 +564,22 @@ target_branches:
         description: "Cython-annotated augmented-pure-python modules (fresh branch, authored as follow-up work)"
         permanent: false
         disable_when_in_development: true
+
+# Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
+# Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
+# Only add a sub-package here if its named branch is always rebuild-safe.
+subpackage_tracking:
+  async-utils: development
+  candles-feed: development
+  connector-utils: development
+  data-type-primitives: development
+  event-bus: development
+  liquidations-feed: development
+  logger: development
+  market-connector: development
+  market-data: development
+  market-simulator: development
+  rate-oracle: development
+  remote-iface: development
+  strategy-framework: development
+  web-assistant: development
