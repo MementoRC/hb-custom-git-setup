@@ -103,15 +103,27 @@ handle_working_changes() {
         log_message "$UNTRACKED_FILES"
     fi
 
-    # If we have any changes or untracked files, stash them
-    if ! git diff --quiet HEAD || [ -n "$UNTRACKED_FILES" ]; then
+    # If we have any changes or untracked files, stash them.
+    # --ignore-submodules: submodule pointer/content drift (e.g. sub-packages/*
+    # left with untracked files by an unrelated worktree session) must not be
+    # treated as "dirty" here — git stash can't actually stash that, so it
+    # would report "No local changes to save" while this script still believed
+    # STASHED=true, causing restore_working_state() to later pop an unrelated
+    # pre-existing stash off the top of the stack.
+    if ! git diff --quiet --ignore-submodules HEAD || [ -n "$UNTRACKED_FILES" ]; then
         STASH_MESSAGE="AUTO_SYNC_$(date +%Y%m%d_%H%M%S)_${CURRENT_BRANCH}"
         log_message "${YELLOW}Stashing all changes (including untracked)...${NC}"
-        if ! git stash push --include-untracked -m "$STASH_MESSAGE"; then
+        local stash_output
+        stash_output="$(git stash push --include-untracked -m "$STASH_MESSAGE" 2>&1)" || {
             log_message "${RED}Failed to stash changes${NC}"
             exit 1
+        }
+        log_message "$stash_output"
+        if [[ "$stash_output" == *"No local changes to save"* ]]; then
+            STASHED=false
+        else
+            STASHED=true
         fi
-        STASHED=true
     else
         STASHED=false
     fi
