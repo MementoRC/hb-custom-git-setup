@@ -1009,7 +1009,6 @@ bump_tracked_subpackages() {
 
     log_section "Auto-tracking sub-package pins"
 
-    local changed=0
     while read -r name branch; do
         [ -z "$name" ] && continue
 
@@ -1031,10 +1030,15 @@ bump_tracked_subpackages() {
             continue
         fi
 
-        local current
-        current="$(git -C "$sub" rev-parse HEAD)"
-        if [ "$target" = "$current" ]; then
-            log_operation "auto-track: $name already at origin/$branch ($target), no bump"
+        # Key off the RECORDED gitlink in the superproject index, not the
+        # submodule's live working-tree HEAD — a pre-moved working tree
+        # (e.g. by another session) would otherwise already match origin
+        # and cause this bump to be silently skipped while the recorded
+        # gitlink stays drifted.
+        local recorded
+        recorded="$(git rev-parse "HEAD:$sub" 2>/dev/null)"
+        if [ "$target" = "$recorded" ]; then
+            log_operation "auto-track: $name already at development tip (${recorded:0:7})"
             continue
         fi
 
@@ -1043,12 +1047,11 @@ bump_tracked_subpackages() {
             continue
         fi
 
-        git add "$sub"
-        log_operation "auto-track: $name $current -> $target (origin/$branch)"
-        changed=1
+        git add -- "$sub"
+        log_operation "auto-track: $name ${recorded:0:7} -> ${target:0:7} (origin/$branch)"
     done <<< "$entries"
 
-    if [ "$changed" = 1 ]; then
+    if ! git diff --cached --quiet; then
         git commit --gpg-sign --no-verify -m "chore(modular): auto-track sub-package pins to configured branch tips
 
 Advance gitlinks for subpackage_tracking entries to their branch tips.
