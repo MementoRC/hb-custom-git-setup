@@ -296,6 +296,42 @@ for path in sys.argv[1:]:
     open(path, 'w').write(text)
 PYEOF
 
+    # Pass 1.6: PEP-585 residual lowercasing — refactor-py312 lowercases most
+    # typing generics (List/Dict/Set/…) to their builtin equivalents and prunes
+    # the now-unused typing import, but its AST visitor misses some annotation
+    # positions (notably `-> Set[str]` return annotations).  Once ruff strips the
+    # import below, the residual capital generic becomes an undefined name (F821)
+    # — this is exactly what broke hummingbot/client/settings.py:432
+    # (connectable_exchange_names).  This pass lowercases any REMAINING
+    # builtin-equivalent capital generics BEFORE ruff prunes imports, so
+    # annotations and imports stay consistent.  Mirrors the StrEnum net above.
+    python3 - "$@" << 'PYEOF'
+import re
+import sys
+
+# typing generics with a PEP 585 builtin equivalent (valid on py3.9+).
+GENERICS = {
+    "List": "list",
+    "Dict": "dict",
+    "Set": "set",
+    "FrozenSet": "frozenset",
+    "Tuple": "tuple",
+    "Type": "type",
+}
+# Match a bare capital generic followed by `[`, not preceded by an identifier
+# char or dot — so `typing.Set[`, `MySet[`, `foo.List[` are left untouched.
+pattern = re.compile(r"(?<![\w.])(" + "|".join(GENERICS) + r")\[")
+
+for path in sys.argv[1:]:
+    try:
+        text = open(path).read()
+    except OSError:
+        continue
+    new = pattern.sub(lambda m: GENERICS[m.group(1)] + "[", text)
+    if new != text:
+        open(path, "w").write(new)
+PYEOF
+
     # Pass 2: auto-fix unused imports (best-effort; non-fatal).
     if [ -n "$ruff_cmd" ]; then
         "$ruff_cmd" check --fix --unsafe-fixes "$@" >& /dev/null || true
