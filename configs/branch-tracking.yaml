@@ -81,6 +81,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/add-typer-dep
+        enabled: true
+        tier: infrastructure
+        description: "Add typer >=0.9.0 to [tool.pixi.dependencies]. setup.py lists typer in install_requires but pixi install-dev runs `pip install --no-deps -e .`, so it never installs into the pixi env; 14 hummingbot/cli/* source files import typer and 17 CLI test files failed collection with ModuleNotFoundError at the ci-base pre-push test gate. Branch based off the ci-base-seed-v1 tag as a clean single-hunk pixi-deps delta with no ancestry drag (mirrors _for_ci/add-aiomqtt-dep). GPG-signed. Added 2026-07-22."
+        permanent: false
+        disable_when_in_development: false
+
       - name: _for_ci/lint-residual
         enabled: true
         tier: infrastructure
