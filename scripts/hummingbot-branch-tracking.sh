@@ -2143,7 +2143,24 @@ main() {
               touch "$RUN_LOG_DIR/.gate_failed"
               _gate_failed=true; break
           fi
-          log_detail "  compile: pass (cargo build + build_ext)"
+          # Augmented-pure-python compile (Phase 3): compile candles-feed's augmented
+          # DataProcessor to a native extension. NON-editable wheel build (the build hook
+          # is registered on hatchling's wheel target, so `pip install -e` would NOT fire
+          # it); HB_COMPILE_AUGMENTED gates the hook; PYTHONPATH supplies the maintainer-
+          # local hb-cython-framework (sibling repo, dev/CI-only, never a published dep).
+          # The hook FAILS CLOSED to a passive pure-Python wheel if the framework is
+          # unavailable, so the native extension is asserted immediately below.
+          if ! ( cd "$REPO_PATH" && HB_COMPILE_AUGMENTED=1 PYTHONPATH="$(dirname "$REPO_PATH")/hb-cython-framework" "$_pixi_cmd" run --frozen -e ci python -m pip install --no-deps --no-build-isolation --force-reinstall sub-packages/candles-feed ) >& "$RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (augmented DataProcessor build) — NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python -c "import candles_feed.core.data_processor as m, sys; sys.exit(0 if m.__file__.endswith(('.so', '.pyd')) else 1)" ) >& "$RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch — augmented DataProcessor did NOT compile to a native extension (hook fail-closed / hb-cython-framework missing at $(dirname "$REPO_PATH")/hb-cython-framework?). NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          log_detail "  compile: pass (cargo build + build_ext + augmented DataProcessor)"
       fi
 
       if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then

@@ -558,12 +558,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_accel/cython-framework
-        enabled: false   # IMPORTANT: false, not true — branch does not exist yet (follow-up work), avoid cron "Branch does not exist" spam
-        tier: feature
-        description: "Cython-annotated augmented-pure-python modules (fresh branch, authored as follow-up work)"
-        permanent: false
-        disable_when_in_development: true
+      # _for_accel/cython-framework retired 2026-07-22: compile-on-accelerated (the augmented
+      # candles-feed DataProcessor native compile) is implemented directly in the accelerated
+      # compile-gate of scripts/hummingbot-branch-tracking.sh, not via a tracked branch — the
+      # augmented source arrives through sub-package auto-track. No _for_accel branch is needed.
 
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
