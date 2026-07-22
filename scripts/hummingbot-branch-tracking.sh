@@ -2077,6 +2077,7 @@ main() {
       --ignore=test/hummingbot/connector/exchange/ascend_ex/
       --ignore=test/hummingbot/core/rate_oracle/sources/test_ascend_ex_rate_source.py
       --ignore=test/hummingbot/connector/exchange/cube/
+      --ignore=test/hummingbot/core/rate_oracle/sources/test_cube_rate_source.py
       --ignore=test/hummingbot/data_feed/candles_feed/ascend_ex_spot_candles/
       --ignore=test/hummingbot/connector/gateway/
       --ignore=test/connector/utilities/oms_connector/
