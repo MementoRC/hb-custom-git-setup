@@ -224,6 +224,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/add-pytest-xdist-dep
+        enabled: true
+        tier: infrastructure
+        description: "Add pytest-xdist>=3,<4 (conda-forge) to [tool.pixi.feature.ci.dependencies] so the pre-push test gate can run pytest -n for parallelism; pixi.lock re-solved. Branch has ci-base ancestry (the pixi ci-env config lives in ci-base, not development). Commit 6901a1f1, GPG-signed. Added 2026-07-23. NOTE: this only makes xdist AVAILABLE; the gate -n wiring is a separate follow-up gated on coverage-under-xdist handling + fixing 2 xdist-unsafe tests (WebAssistantsFactoryTest event-loop-in-setUpClass)."
+        permanent: true
+        disable_when_in_development: false
+
       - name: _for_ci/fix-foxbit-typing-imports
         enabled: true
         tier: infrastructure
