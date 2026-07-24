@@ -983,8 +983,19 @@ merge_for_modular_branches() {
                 return 1
             fi
 
+            local merge_base
+            merge_base="$(git merge-base "$modular_branch" "$ref" 2>/dev/null)"
             for f in "${format_only[@]}"; do
-                git checkout --theirs "$f" 2>/dev/null
+                if [ -n "$merge_base" ] && ! git diff --quiet "$merge_base" "$ref" -- "$f" 2>/dev/null; then
+                    # File is part of $ref's own intentional diff vs its merge-base — branch wins.
+                    git checkout --theirs "$f" 2>/dev/null
+                else
+                    # Not in $ref's own diff vs its merge-base — an incidental conflict from
+                    # stale ancestry, not an intentional change. Keep $modular_branch's
+                    # already-correct content instead of silently regressing it.
+                    git checkout --ours "$f" 2>/dev/null
+                    log_detail "  format_only conflict on $f: not in $ref's own diff vs merge-base — kept ours ($modular_branch) to avoid stale-ancestry regression"
+                fi
                 git add "$f"
             done
             if git diff --cached --quiet; then
@@ -1169,8 +1180,20 @@ merge_for_ci_branches() {
                 return 1
             fi
 
+            local merge_base
+            merge_base="$(git merge-base "$base_branch" "$ref" 2>/dev/null)"
             for f in "${format_only[@]}"; do
-                git checkout --theirs "$f" 2>/dev/null
+                if [ -n "$merge_base" ] && ! git diff --quiet "$merge_base" "$ref" -- "$f" 2>/dev/null; then
+                    # File is part of $ref's own intentional diff vs its merge-base — branch wins.
+                    git checkout --theirs "$f" 2>/dev/null
+                else
+                    # Not in $ref's own diff vs its merge-base — an incidental conflict from
+                    # stale ancestry (e.g. a Class-S seed-fallout branch), not an intentional
+                    # change. Keep $base_branch's already-correct content instead of silently
+                    # regressing it with the branch's stale copy.
+                    git checkout --ours "$f" 2>/dev/null
+                    log_detail "  format_only conflict on $f: not in $ref's own diff vs merge-base — kept ours ($base_branch) to avoid stale-ancestry regression"
+                fi
                 git add "$f"
             done
             if git diff --cached --quiet; then
