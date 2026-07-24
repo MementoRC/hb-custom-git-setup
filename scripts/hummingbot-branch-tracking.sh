@@ -2161,8 +2161,8 @@ main() {
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
-      if ! ( cd "$REPO_PATH" && COVERAGE_FILE="$RUN_LOG_DIR/.coverage_${_gate_branch}" "$_pixi_cmd" run --frozen -e ci coverage run -m pytest "${_pytest_ignores[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
-          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci coverage run -m pytest ${_pytest_ignores[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${_pytest_ignores[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
+          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${_pytest_ignores[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
