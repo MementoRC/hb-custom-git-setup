@@ -308,6 +308,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/lambdaplex-auth-detect-private-key-exclude
+        enabled: true
+        tier: infrastructure
+        description: "Add exclude: ^.*lambdaplex_auth\\.py$ to the detect-private-key hook in ci-base's ruff-based .pre-commit-config.yaml, matching the exclude origin/development's legacy flake8-based config already has for this file. lambdaplex_auth.py's PEM header/footer string constants (wrapping a user-supplied runtime value, no embedded key material) are a confirmed false positive, same as upstream's own already-accepted exclude decision. Without this, ci-base's pre-push quality gate fails on this file on every rebuild that touches it. Wholesale different tooling between tiers (ruff vs flake8) means ci-base ancestry (config file content is ci-base-only). Commit ab5d1a8e, GPG-signed. Added 2026-07-30."
+        permanent: false
+        disable_when_in_development: false
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
