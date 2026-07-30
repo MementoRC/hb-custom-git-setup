@@ -1188,7 +1188,7 @@ merge_for_ci_branches() {
             local logical_conflicts=() format_only=()
             while IFS= read -r file; do
                 case "$file" in
-                    pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                    pyproject.toml|conftest.py|.github/*|test/conftest.py)
                         logical_conflicts+=("$file") ;;
                     *)
                         format_only+=("$file") ;;
