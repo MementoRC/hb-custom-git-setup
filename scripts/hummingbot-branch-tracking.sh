@@ -1953,6 +1953,16 @@ main() {
       else
           log_operation "modular not fast-forwardable to origin/modular (diverged or already at tip)"
       fi
+
+      # Auto-advance sub-package gitlinks even in incremental (non-rebuild) mode.
+      # bump_tracked_subpackages() previously only ran inside sync_modular_branch(),
+      # which is --rebuild-only — merged sub-package PRs silently stalled here on
+      # every cron cycle until the next manual --rebuild. Idempotent (see its own
+      # docstring): safe to call unconditionally, including during --rebuild where
+      # this is a harmless no-op second call (sync_modular_branch already advanced
+      # everything in that path).
+      bump_tracked_subpackages
+
       git checkout "$_current_branch" >& /dev/null
   fi
 
