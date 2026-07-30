@@ -466,10 +466,15 @@ build_ci_base_from_seed() {
         log_operation "Merged origin/$DEVELOPMENT_BRANCH cleanly onto $seed_tag"
     else
         # Conflict classification: same logic as sync_base_branch
-        local logical_conflicts=() format_only=()
+        local logical_conflicts=() format_only=() ours_conflicts=()
         while IFS= read -r file; do
             case "$file" in
-                pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                .pre-commit-config.yaml)
+                    # ci-base-owned infra: ruff-based hooks permanently supersede
+                    # development's legacy flake8/autopep8/eslint config — never a
+                    # logical conflict worth aborting the rebuild over.
+                    ours_conflicts+=("$file") ;;
+                pyproject.toml|conftest.py|.github/*|test/conftest.py)
                     logical_conflicts+=("$file") ;;
                 *) format_only+=("$file") ;;
             esac
@@ -481,6 +486,10 @@ build_ci_base_from_seed() {
             git merge --abort >& /dev/null
             return 1
         fi
+        for f in "${ours_conflicts[@]}"; do
+            git checkout --ours "$f" 2>/dev/null
+            git add "$f"
+        done
         for f in "${format_only[@]}"; do
             git checkout --theirs "$f" 2>/dev/null
             git add "$f"
@@ -490,7 +499,7 @@ build_ci_base_from_seed() {
             git merge --abort 2>/dev/null
             return 1
         }
-        log_operation "Merged development (${#format_only[@]} format-only conflicts resolved)"
+        log_operation "Merged development (${#format_only[@]} format-only conflicts resolved, ${#ours_conflicts[@]} ours-resolved)"
     fi
 
     # Submodule sync is NOT needed here: ci-base must have ZERO sub-package artifacts.
@@ -579,14 +588,21 @@ sync_base_branch() {
             if git merge --no-verify "$DEVELOPMENT_BRANCH" -m "Sync $base_branch with $DEVELOPMENT_BRANCH" >& /dev/null; then
                 log_operation "Merged $DEVELOPMENT_BRANCH cleanly"
             else
-                # Conflicts — classify as format-only vs logical
+                # Conflicts — classify as format-only vs logical vs ours (ci-base-owned infra)
                 local logical_conflicts=()
                 local format_only=()
+                local ours_conflicts=()
 
                 while IFS= read -r file; do
                     case "$file" in
+                        .pre-commit-config.yaml)
+                            # ci-base-owned infra: ruff-based hooks permanently supersede
+                            # development's legacy flake8/autopep8/eslint config — never a
+                            # logical conflict worth aborting the sync over.
+                            ours_conflicts+=("$file")
+                            ;;
                         # CI/test config files have logical changes — need manual review
-                        pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                        pyproject.toml|conftest.py|.github/*|test/conftest.py)
                             logical_conflicts+=("$file")
                             ;;
                         *)
@@ -606,6 +622,12 @@ sync_base_branch() {
                     return 1
                 fi
 
+                # ci-base-owned infra conflicts: always keep our version
+                for f in "${ours_conflicts[@]}"; do
+                    git checkout --ours "$f" 2>/dev/null
+                    git add "$f"
+                done
+
                 # Format-only conflicts: accept upstream content, will reformat below
                 for f in "${format_only[@]}"; do
                     git checkout --theirs "$f" 2>/dev/null
@@ -617,7 +639,7 @@ sync_base_branch() {
                     indent_pop
                     return 1
                 }
-                log_operation "Resolved ${#format_only[@]} format-only conflicts"
+                log_operation "Resolved ${#format_only[@]} format-only conflicts, ${#ours_conflicts[@]} ours-resolved"
             fi
 
             # Re-initialize submodules after merge (development doesn't track them,
