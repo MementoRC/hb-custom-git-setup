@@ -315,6 +315,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/expand-ruff-coverage
+        enabled: true
+        tier: infrastructure
+        description: "Widen [tool.ruff] include in pyproject.toml to cover controllers/**/*.py, scripts/**/*.py, bin/**/*.py, bin/hbot, hummingbot/**/*.pyi (previously only hummingbot/**/*.py + test/**/*.py); add bin to the lint/format/format-check pixi task arg lists (bin was missing entirely). Root-caused the recurring pre-push quality gate failure: pixi run -e ci lint/format-check passed trivially because ruff's include-glob directory-walk silently found zero files under controllers/scripts/bin, while pre-commit's ruff hook (operating on explicit tracked file paths, which bypass include-glob filtering) caught real accumulated violations there -- NOT a ruff-version skew as first suspected (pre-commit rev v0.15.7 and pixi ci-env ruff==0.15.7 already matched exactly). One-time normalization of the 61 newly-covered files included in the same commit. Commit 7d65ec1d, GPG-signed. Verified: pre-commit run --all-files exits 0 with zero further changes; lint + format-check clean under widened scope. EXCEPTION per feedback_for_ci_rebase_viability.md: origin/development's pyproject.toml entirely lacks the [tool.pixi.*]/[tool.ruff]/[tool.mypy]/[tool.bandit]/[tool.coverage.*] sections this fix edits, so rebase --onto development is structurally impossible (not a resolvable conflict) -- branch is based on ci-base as-is, unlike the normal _for_ci recipe. SINGLE-USE: retire (delete local + delete origin + remove this entry) once the next --rebuild cycle absorbs/merges it into ci-base; do not let it persist across cycles. Added 2026-07-31."
+        permanent: false
+        disable_when_in_development: false
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
