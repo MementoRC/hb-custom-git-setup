@@ -25,6 +25,37 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 : "${LOCAL_REPO_DIR:="$HOME/PycharmProjects/Hummingbot/hummingbot"}"
 
 ###############################################################################
+# Pixi binary resolution
+# -----------------------------------------------------------------------------
+# `pixi` resolves differently depending on which binary happens to be first on
+# PATH in a given invocation context. Mixing binaries across a single script
+# run can write/read pixi.lock in different lock-file FORMAT VERSIONS (e.g. a
+# newer pixi writes lock version 7, but an older pixi on PATH only supports up
+# to version 6), causing `pixi run --frozen` to fail with "lock file version
+# is 7, but only up to including version 6 is supported." Resolve ONCE via a
+# deterministic absolute-path candidate list so every call site in a given run
+# uses the SAME binary.
+###############################################################################
+_resolve_pixi_cmd() {
+    local -a _pixi_candidates=(
+        "/home/memento/.conda/envs/ClaudeCode/bin/pixi"
+        "/home/memento/.conda/envs/python-3.11/bin/pixi"
+    )
+    local _candidate
+    for _candidate in "${_pixi_candidates[@]}"; do
+        if [ -x "$_candidate" ]; then
+            echo "$_candidate"
+            return 0
+        fi
+    done
+    if command -v pixi &> /dev/null; then
+        command -v pixi
+        return 0
+    fi
+    return 1
+}
+
+###############################################################################
 # Git State Management
 ###############################################################################
 
@@ -1414,6 +1445,12 @@ run_tests() {
 
     mkdir -p "$(dirname "$selector_state")"
 
+    local _pixi_cmd
+    if ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
+        log_error "pixi not found — cannot run tests"
+        return 1
+    fi
+
     # Resolve head SHA (used for mark-success and dedup)
     local head_sha
     head_sha="$(git -C "$REPO_PATH" rev-parse "$target_branch" 2>/dev/null)"
@@ -1436,7 +1473,7 @@ run_tests() {
     fi
 
     local selector_exit=0
-    (cd "$REPO_PATH" && pixi run python "$selector_script" "${selector_args[@]}") > "$test_list_file" 2> "$selector_log" || selector_exit=$?
+    (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" "${selector_args[@]}") > "$test_list_file" 2> "$selector_log" || selector_exit=$?
 
     case "$selector_exit" in
         0)
@@ -1451,12 +1488,12 @@ run_tests() {
             test_count="$(echo "$test_files" | wc -l)"
             log_step "Selector chose $test_count tests; running pixi pytest"
             # shellcheck disable=SC2086
-            (cd "$REPO_PATH" && pixi run pytest $test_files -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest $test_files -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "pytest PASS ($test_count tests); see $(basename "$pytest_log")"
                 # Update state with success
-                (cd "$REPO_PATH" && pixi run python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
                 return 0
             else
@@ -1475,15 +1512,15 @@ run_tests() {
             # build dependency, so the rebuild must be explicit here.
             local build_log="${pytest_log%.log}_build.log"
             log_step "Rebuilding Cython extensions before full suite (pixi run build)"
-            if ! (cd "$REPO_PATH" && pixi run build) > "$build_log" 2>&1; then
+            if ! (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen build) > "$build_log" 2>&1; then
                 log_result false "Cython build FAILED before full suite; see $build_log"
                 return 1
             fi
-            (cd "$REPO_PATH" && pixi run pytest -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "Full-suite pytest PASS; see $(basename "$pytest_log")"
-                (cd "$REPO_PATH" && pixi run python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
                 return 0
             else
@@ -2115,9 +2152,7 @@ main() {
   local _pixi_cmd="" _gate_branch _changed _q_ok
   local -a _pushed=()
   local _gate_failed=false
-  if command -v pixi &> /dev/null; then
-      _pixi_cmd="pixi"
-  else
+  if ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
       log_error "pixi not found — cannot run CI-identical gate; refusing to push unverified branches"
       exit 1
   fi
