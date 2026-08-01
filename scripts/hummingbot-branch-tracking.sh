@@ -2161,28 +2161,30 @@ main() {
       fi
 
       _q_ok=true
+      _quality_log="$RUN_LOG_DIR/gate_quality_${_gate_branch}.log"
+      : > "$_quality_log"
       _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
       if [ -n "$_changed" ]; then
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >& /dev/null; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1; then
               if ! git -C "$REPO_PATH" diff --quiet; then
                   git -C "$REPO_PATH" add -A -- . ':!sub-packages'
                   git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
-                      -m "style: pre-push CI-gate autofix on $_gate_branch" >& /dev/null
+                      -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
               fi
               _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
               if [ -n "$_changed" ]; then
-                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >& /dev/null || _q_ok=false
+                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
               fi
           fi
       fi
       if [ "$_q_ok" = true ]; then
-          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint ) >& /dev/null || _q_ok=false
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint ) >> "$_quality_log" 2>&1 || _q_ok=false
       fi
       if [ "$_q_ok" = true ]; then
-          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci format-check ) >& /dev/null || _q_ok=false
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci format-check ) >> "$_quality_log" 2>&1 || _q_ok=false
       fi
       if [ "$_q_ok" != true ]; then
-          log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check"
+          log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check — see $_quality_log"
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
