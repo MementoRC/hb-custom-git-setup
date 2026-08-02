@@ -332,6 +332,29 @@ target_branches:
     base_branch: ci-base
 
     tracked_branches:
+      # Latent architectural facts from the 2026-07-13 sub-package integration survey
+      # (subpackage-bleeding-edge-integration-survey.md) — not yet encoded as tracked-branch
+      # metadata below, but future branch authors must account for them:
+      #
+      # 1. market-connector and market-data both have a REAL (currently undeclared) internal
+      #    dependency on strategy-framework. Any FUTURE _for_bleed/* branch where either of
+      #    these two sub-packages actually imports/consumes strategy-framework MUST declare
+      #    `base: modular` (NOT `base: ci-base` — that mistake was already made once by an
+      #    unrelated branch and had to be verified/refuted after the fact).
+      #
+      # 2. Gitlink-sequencing constraint: if modular-wiring (or any future wiring branch) is
+      #    ever split into per-package commits, the strategy-framework submodule pointer must
+      #    be bumped in the same commit as, or an earlier commit than, market-connector's or
+      #    market-data's pointer bump — the latter two depend on it. Currently a non-issue
+      #    because all 14 pins move together in one commit; this is a forward-looking guard
+      #    for if that ever changes.
+      #
+      # 3. data-type-primitives and connector-utils share a "frozen-mirror" relationship:
+      #    data-type-primitives's _trading_pair.py intentionally duplicates connector-utils's
+      #    trading-pair split/combine logic (labeled/documented, not accidental). This is NOT
+      #    a merge dependency (neither package has an active consuming branch) — noted here so
+      #    a future extraction effort declares a real dependency rather than re-vendoring the
+      #    logic again.
       - name: _for_bleed/modular-wiring
         enabled: true
         base: modular
@@ -340,6 +363,15 @@ target_branches:
         description: "Sub-package wiring layer: .gitmodules + 14 gitlinks, install-subpackages + compat tasks, ci/check_subpackage_compat.py, web_assistant/async_utils shims, sub-packages-compat CI job, remote_iface Phase-6 cutover (ce0721754)"
         permanent: false
         disable_when_in_development: false
+
+      - name: _for_bleed/dedupe-hummingbot-logger-modular
+        enabled: true
+        base: modular
+        tier: feature
+        merge_order: 2
+        description: "Re-tiered replacement for the ci-base-tier _for_bleed/dedupe-hummingbot-logger (that entry is structurally unfixable at ci-base — no sub-packages/ wiring there). Replaces hummingbot/logger/logger.py's duplicate HummingbotLogger with a real `from logger.logger import HummingbotLogger` re-export (fixes MementoRC/hb-logger#9), and wires the hb-logger callback API (register_notify_handler / register_network_handler) into HummingbotApplication.__init__ — the first real call site for MementoRC/hb-logger#1's Phase 0 callback-registration refactor, replacing the old HummingbotApplication.main_application() singleton lookup baked into modular's pre-refactor logger.py. Depends on the logger submodule provided by modular-wiring; merge_order 2 (after modular-wiring's 1)."
+        permanent: false
+        disable_when_in_development: true
 
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
@@ -488,6 +520,15 @@ target_branches:
         disable_when_in_development: true
         parent: _for_bleed/logger-callback-refactor
 
+      # NOTE (2026-08-01): base:ci-base is structurally wrong for this branch — the sub-package
+      # real-import it needs (`from logger.logger import HummingbotLogger`) cannot resolve at the
+      # ci-base tier (no sub-packages/ dir, no .gitmodules, no install-subpackages task there;
+      # verified live via ModuleNotFoundError: No module named 'logger'). Per the standing rule
+      # "any consumer branch that imports a sub-package must be base: modular or later", the actual
+      # dedupe fix has been RE-TIERED and landed instead on _for_bleed/dedupe-hummingbot-logger-modular
+      # (see modular.tracked_branches below, merge_order after _for_bleed/modular-wiring). This
+      # ci-base-tier entry is left AS-IS (do not re-fix here; do not delete without confirming the
+      # -modular branch has fully superseded it) so a future session does not attempt this twice.
       - name: _for_bleed/dedupe-hummingbot-logger
         enabled: true
         base: ci-base
