@@ -582,22 +582,6 @@ target_branches:
         # _for_bleed/hb-event-bus). Re-enable once event-bus work is merged and the bridge
         # code is settled.
 
-        # Temporarily disabled 2026-06-09 — branch tip b0cc5b17 has ancestor f865e82a65
-        # (a discarded SHA from ci-base orthogonality restoration). Cannot be mechanically
-        # rebased onto new clean ci-base (78e11a9bef): the first commit
-        # "786962f65 feat(extraction): regenerate connector-data-types-step-1 from ci-base"
-        # is a script-generated codemod pass and conflicts with 55 connector files.
-        # Re-enable after: (1) _for_ci/ci-base-baseline-fixes merges into ci-base via rebuild,
-        # (2) manually regenerate step-1 in worktree against the new ci-base tip.
-        # Original tip preserved at tag step1-pre-rebase-2026-06-09 / branch _archive/...
-      - name: _for_bleed/connector-data-types-extraction-step-1
-        enabled: false
-        last_reviewed: "2026-06-09"
-        tier: feature
-        description: "Extract connector data types (common, cancellation_result, funding_info, trade_fee, in_flight_order, LimitOrderStatus) into hb-data-type-primitives sub-package with hb_compat shims. PR #4 in hb-data-type-primitives merged; this branch is the consumer-side step-1 (shims active). limit_order intentionally not shimmed (.pyx serves it)."
-        permanent: false
-        disable_when_in_development: true
-
       # _for_bleed/remove-conda-setup: PROMOTED to ci-base 2026-06-12 (SHA 447d577dad41a6ba24f8ff4dc8ada32ced8e95bb) — chore: remove conda-era install artifacts. Source was recurring-rebase-incompatible due to setup/*.yml merge=ours rule which the same commit removes; promotion eliminates the conflict permanently
 
       # _for_bleed_manual/kraken-tweaks: RETIRED 2026-07-05 — absorbed into development (verified zero-diff); local+origin deleted, entry purged
