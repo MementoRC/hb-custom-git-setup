@@ -465,10 +465,10 @@ target_branches:
         enabled: true
         base: modular
         tier: feature
-        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives sub-package (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan."
+        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives sub-package (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan. REBASED 2026-08-04: was originally cut off modular at ce03fb44 (the dedupe-hummingbot-logger-modular merge), which dragged an unintended hummingbot/logger/logger.py change into its ancestry and caused a silent 'Merge failed' against bleeding-edge in the 2026-08-04 cron run. Rebased --onto origin/ci-base (now 29cba381, single commit, GPG-verified); merge_tree verified clean against BOTH bleeding-edge and modular. base:modular is retained because the shim imports data_type_primitives and needs modular-tier sub-package infra at runtime."
         permanent: false
         disable_when_in_development: true
-        last_reviewed: "2026-08-03"
+        last_reviewed: "2026-08-04"
 
       # MOVED 2026-06-14 to modular.tracked_branches (Step D-C reclassification): _for_bleed/web-assistant
       # MOVED BACK 2026-06-15 from modular.tracked_branches: feature belongs in bleeding-edge
