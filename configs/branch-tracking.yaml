@@ -373,6 +373,26 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/user-stream-tracker
+        enabled: true
+        base: modular
+        tier: feature
+        merge_order: 3
+        description: "Parent-side wiring for the hb-user-stream-tracker extraction (hb-user-stream-tracker#1, merged to development 2026-08-04). Adds the sub-packages/user-stream-tracker submodule (15th), install-subpackages + ci/check_subpackage_compat.py entries, and rewrites hummingbot/core/data_type/user_stream_tracker.py and user_stream_tracker_data_source.py as 3-line re-export shims (Recipe 1). Verified before replacing: each source file held only its single target class, and all 102 imports across 100 files reference only UserStreamTracker / UserStreamTrackerDataSource, so the 46 connector user-stream data source files need zero import changes. Based on modular (NOT ci-base) because install-subpackages and check_subpackage_compat.py exist only from the modular tier upward -- follows the dedupe-hummingbot-logger-modular precedent. NOTE: also edits .importlinter, which _for_ci/import-linter otherwise owns; the two touch different regions (this adds a root_packages entry plus a new top layer row; that branch adds ignore_imports inside two contract bodies)."
+        permanent: false
+        disable_when_in_development: true
+        last_reviewed: "2026-08-05"
+
+      - name: _for_bleed/exceptions-shim
+        enabled: true
+        base: modular
+        tier: feature
+        merge_order: 4
+        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan. RE-TIERED 2026-08-05 from bleeding-edge.tracked_branches to modular: the bleeding-edge gate runs the full pytest suite BEFORE install-subpackages, so the shim import of data_type_primitives failed collection (exit=2) and the merge was reverted every run -- structurally unfixable at that tier, same reason dedupe-hummingbot-logger was re-tiered to dedupe-hummingbot-logger-modular. Branch is at 29cba381 (rebased --onto ci-base 2026-08-04 to shed an unintended logger.py change); merge_tree verified clean against modular, so no further rebase is needed for this move."
+        permanent: false
+        disable_when_in_development: true
+        last_reviewed: "2026-08-05"
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
@@ -461,14 +481,7 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/exceptions-shim
-        enabled: true
-        base: modular
-        tier: feature
-        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives sub-package (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan. REBASED 2026-08-04: was originally cut off modular at ce03fb44 (the dedupe-hummingbot-logger-modular merge), which dragged an unintended hummingbot/logger/logger.py change into its ancestry and caused a silent 'Merge failed' against bleeding-edge in the 2026-08-04 cron run. Rebased --onto origin/ci-base (now 29cba381, single commit, GPG-verified); merge_tree verified clean against BOTH bleeding-edge and modular. base:modular is retained because the shim imports data_type_primitives and needs modular-tier sub-package infra at runtime."
-        permanent: false
-        disable_when_in_development: true
-        last_reviewed: "2026-08-04"
+      # _for_bleed/exceptions-shim: MOVED 2026-08-05 to modular.tracked_branches — the bleeding-edge test gate runs the full pytest suite BEFORE install-subpackages, so a shim importing data_type_primitives fails collection (exit=2) and gets reverted. Same structural reason dedupe-hummingbot-logger was re-tiered.
 
       # MOVED 2026-06-14 to modular.tracked_branches (Step D-C reclassification): _for_bleed/web-assistant
       # MOVED BACK 2026-06-15 from modular.tracked_branches: feature belongs in bleeding-edge
@@ -644,4 +657,5 @@ subpackage_tracking:
   rate-oracle: development
   remote-iface: development
   strategy-framework: development
+  user-stream-tracker: development
   web-assistant: development
