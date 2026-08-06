@@ -525,40 +525,20 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/logger-callback-refactor
-        enabled: true
-        base: ci-base
-        tier: feature
-        description: "Phase 0 of MementoRC/hb-logger#1 extraction: replace deferred HummingbotApplication imports in HummingbotLogger.notify/network with callback registration pattern (register_notify_handler / register_network_handler classmethods) to break the logger->application circular dependency."
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/logger-callback-refactor: RETIRED 2026-08-06 — its whole payload (register_notify_handler / register_network_handler replacing the HummingbotApplication.main_application() lookup) is already in the hb-logger sub-package, which modular re-exports. Patching the now-deleted local class produced an invalid logger.py on bleeding-edge. local+origin deleted, entry purged. Deleted tip d2e8583174 -- recover with: git branch _for_bleed/logger-callback-refactor d2e8583174
 
-      - name: _for_bleed/logger-type-cleanup
-        enabled: true
-        base: ci-base
-        tier: feature
-        description: "Clean up 6 pre-existing type defects in hummingbot/logger (StreamHandler[str], TracebackType None guard, findCaller tuple annotation, log_encoder signature, dataclass instance guard, _log args tuple). Lets hb-logger sub-package drop the matching disable_error_code suppressions. Builds on _for_bleed/logger-callback-refactor."
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/logger-callback-refactor
+      # _for_bleed/logger-type-cleanup: RETIRED 2026-08-06 — its logger.py hunks patched the local class that modular already replaced with a re-export. Its three genuinely-independent fixes (cli_handler StreamHandler[TextIO]; log_encoder typing + is_dataclass class-vs-instance guard; struct_logger _log missing positional args) were salvaged to _for_bleed/logger-type-fixes (commit cc4d7064). local+origin deleted, entry purged. Deleted tip 099acc41b1 -- recover with: git branch _for_bleed/logger-type-cleanup 099acc41b1
 
-      # NOTE (2026-08-01): base:ci-base is structurally wrong for this branch — the sub-package
-      # real-import it needs (`from logger.logger import HummingbotLogger`) cannot resolve at the
-      # ci-base tier (no sub-packages/ dir, no .gitmodules, no install-subpackages task there;
-      # verified live via ModuleNotFoundError: No module named 'logger'). Per the standing rule
-      # "any consumer branch that imports a sub-package must be base: modular or later", the actual
-      # dedupe fix has been RE-TIERED and landed instead on _for_bleed/dedupe-hummingbot-logger-modular
-      # (see modular.tracked_branches below, merge_order after _for_bleed/modular-wiring). This
-      # ci-base-tier entry is left AS-IS (do not re-fix here; do not delete without confirming the
-      # -modular branch has fully superseded it) so a future session does not attempt this twice.
-      - name: _for_bleed/dedupe-hummingbot-logger
+      # _for_bleed/dedupe-hummingbot-logger: RETIRED 2026-08-06 — superseded by _for_bleed/dedupe-hummingbot-logger-modular on the modular tier (as the prior NOTE here already recorded). Left enabled it kept re-applying local-class hunks onto modular's re-export and corrupting logger.py on bleeding-edge. local+origin deleted, entry purged. Deleted tip 50ef7ada43 -- recover with: git branch _for_bleed/dedupe-hummingbot-logger 50ef7ada43
+
+      - name: _for_bleed/logger-type-fixes
         enabled: true
         base: ci-base
         tier: feature
-        description: "Dedupe HummingbotLogger: replaces hummingbot/logger/{__init__,logger}.py with re-export shims importing from the canonical `logger` sub-package. Fixes MementoRC/hb-logger#9 (dual-import isinstance failure). Progresses MementoRC/hb-logger#1 Phase 5 partial. Parent-chained after logger-type-cleanup so the shim cleanly overwrites prior callback/type changes; runtime behavior preserved by sub-package."
+        description: "Salvaged from the retired _for_bleed/logger-type-cleanup: three fixes that are independent of the hb-logger dedupe. cli_handler.py StreamHandler -> StreamHandler[TextIO]; __init__.py log_encoder typed plus a not-isinstance(obj, type) guard on dataclasses.is_dataclass (which returns True for a dataclass CLASS, and asdict raises on a class); struct_logger.py _log(level, msg, (), extra=...) since Logger._log takes args positionally and the old call raised TypeError on the non-dict error path. Deliberately carries ZERO hummingbot/logger/logger.py hunks -- that file is owned by the modular tier re-export. base:ci-base because these three files have no sub-package imports."
         permanent: false
         disable_when_in_development: true
-        parent: _for_bleed/logger-type-cleanup
+        last_reviewed: "2026-08-06"
 
       # _for_bleed/position-exchange-executor: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. RE-ENABLED 2026-06-18: same lost-promotion c83247374 (seed-v2 reseed); recovered via rebuild loop.
       - name: _for_bleed/position-exchange-executor
