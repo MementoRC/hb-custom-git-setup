@@ -1138,7 +1138,22 @@ bump_tracked_subpackages() {
         local recorded
         recorded="$(git rev-parse "HEAD:$sub" 2>/dev/null)"
         if [ "$target" = "$recorded" ]; then
-            log_operation "auto-track: $name already at development tip (${recorded:0:7})"
+            # The recorded gitlink is already correct, so the checkout below is
+            # skipped — but the working TREE can still be stale (left behind by an
+            # earlier run) or absent entirely for a newly added submodule. Verify
+            # and re-sync explicitly, otherwise editable installs (pip install -e
+            # sub-packages/<name>) resolve against the wrong content.
+            local live
+            live="$(git -C "$sub" rev-parse HEAD 2>/dev/null || echo "")"
+            if [ "$live" != "$target" ]; then
+                if git submodule update --init --force -- "$sub" >& /dev/null; then
+                    log_operation "auto-track: $name working tree re-synced to recorded pin (${recorded:0:7})"
+                else
+                    log_warning "auto-track: working-tree re-sync FAILED for $name (recorded ${recorded:0:7}, tree ${live:0:7})"
+                fi
+            else
+                log_operation "auto-track: $name already at development tip (${recorded:0:7})"
+            fi
             continue
         fi
 
@@ -2205,6 +2220,21 @@ main() {
           log_error "  checkout $_gate_branch failed — aborting gate"
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
+      fi
+
+      # `git checkout` moves the recorded gitlinks but does NOT touch submodule
+      # working trees, so without this the gate would build and test whatever the
+      # PREVIOUS tier left on disk. Sync the trees to the pins this branch actually
+      # records before quality/build/test run. --init also populates submodules
+      # added since the last checkout, which would otherwise be empty directories
+      # and fail `pip install -e` during install-subpackages.
+      if [ -f "$REPO_PATH/.gitmodules" ]; then
+          if ! git -C "$REPO_PATH" submodule update --init --recursive >& "$RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"; then
+              log_error "  Submodule sync FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && git submodule update --init --recursive — see $RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          log_detail "  submodules: synced to recorded pins"
       fi
 
       _q_ok=true
