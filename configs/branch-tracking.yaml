@@ -592,6 +592,20 @@ target_branches:
 
       # _for_bleed/test-coverage: PROMOTED 2026-07-05 to ci-base tier as _for_ci/test-coverage (test-only content); origin deleted, entry moved to ci-base.tracked_branches
 
+      - name: _for_bleed_manual/drop-orphaned-vertex-user-stream-test
+        enabled: true
+        base: ci-base
+        tier: infrastructure
+        description: "Deletes the orphaned vertex user-stream data source test reintroduced by the seed each rebuild (upstream deleted source+test; the seed carries both, and the seed+development merge drops the source but keeps the test)"
+        permanent: false
+        disable_when_in_development: false
+        last_reviewed: "2026-08-07"
+        # Interim measure for MementoRC/hummingbot#72. disable_when_in_development MUST stay false:
+        # the file is already absent from development, so an auto-disable check would wrongly retire
+        # this branch — the Class-S "empty-vs-development is not a retire signal" trap.
+        # Durable fix is to drop the orphaned test when ci-base-seed-v1 is re-cut; retire this branch
+        # three-part (local + origin + this entry) at that point.
+
   accelerated:
     # Compiled-extension optimization layer above bleeding-edge (Rust, Cython).
     # Keeps bleeding-edge purely pure-Python; accelerated is where compiled-extension
