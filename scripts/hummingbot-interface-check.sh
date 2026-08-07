@@ -187,13 +187,21 @@ check_data_types() {
     log_section "$(colorize "$BLUE" "Executor Data Types")"
 
     local check_output
+    local check_status
     check_output=$(run_python_check "Import data_types" "
 try:
     from hummingbot.strategy_v2.executors.data_types import ExecutorConfigBase, ConnectorPair
     print('OK')
-except ImportError as e:
+except Exception as e:
     print('IMPORT_ERROR:' + str(e))
 ")
+    check_status=$?
+
+    if [ $check_status -ne 0 ]; then
+        BREAKING_CHANGES+=("data_types: probe failed (non-ImportError crash or environment failure)")
+        log_result false "Probe failed"
+        return 1
+    fi
 
     if echo "$check_output" | grep -q "^IMPORT_ERROR:"; then
         local err="${check_output#IMPORT_ERROR:}"
@@ -211,6 +219,7 @@ check_directional_controller() {
     log_section "$(colorize "$BLUE" "DirectionalTradingControllerBase")"
 
     local check_output
+    local check_status
     check_output=$(run_python_check "Import DirectionalTradingControllerBase" "
 try:
     from hummingbot.strategy_v2.controllers.directional_trading_controller_base import (
@@ -218,9 +227,16 @@ try:
         DirectionalTradingControllerConfigBase
     )
     print('OK')
-except ImportError as e:
+except Exception as e:
     print('IMPORT_ERROR:' + str(e))
 ")
+    check_status=$?
+
+    if [ $check_status -ne 0 ]; then
+        BREAKING_CHANGES+=("DirectionalTradingController: probe failed (non-ImportError crash or environment failure)")
+        log_result false "Probe failed"
+        return 1
+    fi
 
     if echo "$check_output" | grep -q "^IMPORT_ERROR:"; then
         local err="${check_output#IMPORT_ERROR:}"
@@ -232,6 +248,7 @@ except ImportError as e:
 
     # Check config base has expected fields (Pydantic model_fields includes inherited)
     local fields_check
+    local fields_status
     fields_check=$(run_python_check "Config fields" "
 from hummingbot.strategy_v2.controllers.directional_trading_controller_base import DirectionalTradingControllerConfigBase
 # Use Pydantic model_fields to get all fields including inherited ones
@@ -247,6 +264,13 @@ if missing:
 else:
     print('OK')
 ")
+    fields_status=$?
+
+    if [ $fields_status -ne 0 ]; then
+        BREAKING_CHANGES+=("DirectionalTradingControllerConfigBase: fields probe failed")
+        log_result false "Probe failed"
+        return 1
+    fi
 
     if echo "$fields_check" | grep -q "^MISSING_FIELDS:"; then
         local missing_fields="${fields_check#MISSING_FIELDS:}"

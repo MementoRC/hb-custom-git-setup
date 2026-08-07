@@ -498,8 +498,10 @@ fi
 # Build in-place .so extensions so interface check (Step 4) and future
 # test-selection gate can import Cython-backed modules. SHA marker over
 # .pyx + .pxd content plus the active Python ABI tag — skips rebuild when
-# nothing has changed since the last successful build. Fatal failure mode:
-# a build error aborts the rebuild instead of silently leaving stale .so.
+# nothing has changed since the last successful build. On failure: marks
+# CYTHON_BUILD_STATUS=FAIL, records an error, and sets OVERALL_STATUS=1;
+# execution continues to later steps (no exit), and Step 4 gates on this
+# status instead of probing against a possibly-stale .so.
 ###############################################################################
 CYTHON_BUILD_STATUS="skipped"
 CYTHON_SHA_MARKER="${CRON_LOG_DIR}/cython_build_sha.txt"
@@ -605,7 +607,7 @@ fi
 ###############################################################################
 # Step 4: Interface Compatibility Check
 ###############################################################################
-if [ "$SKIP_INTERFACE" = false ]; then
+if [ "$SKIP_INTERFACE" = false ] && { [ "$CYTHON_BUILD_STATUS" = "pass" ] || [ "$CYTHON_BUILD_STATUS" = "skipped (no .pyx/.pxd changes)" ]; }; then
     log_section "$(colorize "$BLUE" "Step 4: Interface Check")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-interface-check.sh" ]; then
@@ -632,6 +634,9 @@ if [ "$SKIP_INTERFACE" = false ]; then
         log_error "Interface check script not available"
         indent_pop
     fi
+elif [ "$SKIP_INTERFACE" = false ]; then
+    INTERFACE_STATUS="skipped (Cython build unavailable)"
+    log_step "Interface check: skipped (Cython build did not run — result would be unreliable)"
 else
     log_step "Interface check: skipped (--skip-interface)"
 fi
