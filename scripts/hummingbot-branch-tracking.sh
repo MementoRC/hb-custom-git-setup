@@ -2302,6 +2302,26 @@ main() {
       fi
       log_detail "  tests: pass"
 
+      # Boundaries-gate: modular tier and above ONLY. ci-base carries .importlinter and
+      # the lint-boundaries task but installs ZERO sub-packages, so import-linter cannot
+      # resolve the contracts' root packages (async_utils, event_bus, ...) there. Skipping
+      # ci-base is deliberate: running it would fail a currently-green tier on a missing
+      # precondition, not a real violation.
+      #
+      # Blocking ON PURPOSE. The cron wrapper's Step 3 also runs lint-boundaries, but is
+      # explicitly advisory there (accumulates into MODULAR_FAILURES, never escalates
+      # OVERALL_STATUS) — which is why an adr-0001 layers break introduced by the
+      # user_stream_tracker re-export shims gated green through all four tiers on
+      # 2026-08-07 and sat unfixed for days. This gate blocks the push instead.
+      if [ "$_gate_branch" != "ci-base" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint-boundaries ) >& "$RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"; then
+              log_error "  Boundaries gate FAILED on $_gate_branch — import-linter contract broken; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint-boundaries — see $RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              _gate_failed=true; break
+          fi
+          log_detail "  boundaries: pass (import-linter)"
+      fi
+
       # Compile-gate: accelerated tier ONLY. Rust cargo build + Cython build_ext
       # must both succeed before accelerated is pushed. A failure here aborts the
       # push for accelerated ONLY (via the same _gate_failed=true; break as every
