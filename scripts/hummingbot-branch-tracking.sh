@@ -2001,15 +2001,13 @@ main() {
           exit 1
       }
 
-      # Step 3: create the accelerated tier from FEATURE_BRANCH (bleeding-edge) tip.
-      # Mirrors the FEATURE_BRANCH init above; accelerated.tracked_branches merge
-      # happens later via the generic sync_branch() loop over get_target_branches().
-      if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
-          sync_accelerated_branch "accelerated" "$FEATURE_BRANCH" || {
-              log_error "accelerated branch init failed — rebuild aborted"
-              exit 1
-          }
-      fi
+      # Step 3: the accelerated tier is built LATER, after the tracked-branch loop,
+      # the aiomqtt pin, and the final format pass — see "Build the accelerated
+      # tier" below. It used to be cut here, but at this point $FEATURE_BRANCH is
+      # still bleeding-edge's empty "Initialize" commit, so accelerated captured
+      # modular + _for_accel/* with NONE of the _for_bleed/* features (confirmed
+      # 2026-08-08: accelerated 4ab31bca was parented on ad6cc0cc "Initialize
+      # bleeding-edge", not on the finished tip e31fffd9).
 
       log_result true "Rebuild complete"
   fi
@@ -2049,7 +2047,13 @@ main() {
       # ci-base is managed exclusively by sync_base_branch (development sync +
       # format pass + merge_for_ci_branches + py312 post-merge transform).
       # Skip it here to prevent double-processing _for_ci/* branches.
-      if [ "$target_branch" = "ci-base" ]; then
+      #
+      # accelerated is ALSO skipped here: get_target_branches() yields it BEFORE
+      # bleeding-edge, so merging _for_accel/* in this loop would land them on a
+      # bleeding-edge tip that has not yet received its _for_bleed/* features.
+      # The tier is built after this loop instead (see "Build the accelerated
+      # tier" below).
+      if [ "$target_branch" = "ci-base" ] || [ "$target_branch" = "accelerated" ]; then
           continue
       fi
 
@@ -2106,6 +2110,35 @@ main() {
               log_step "Applied final format pass"
           fi
       fi
+  fi
+
+  # ----------------------------------------------------------------------------
+  # Build the accelerated tier from the FINISHED bleeding-edge tip.
+  # This MUST run after the tracked-branch loop, pin_aiomqtt_transport, and the
+  # final format pass. Relocated here 2026-08-08: it previously ran before any of
+  # those (next to the bleeding-edge init), which cut accelerated from
+  # bleeding-edge's empty "Initialize" commit and silently shipped the tier as
+  # modular + _for_accel/* with none of the _for_bleed/* features.
+  # ----------------------------------------------------------------------------
+  if [ "$REBUILD_MODE" = "true" ] && yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+      sync_accelerated_branch "accelerated" "$FEATURE_BRANCH" || {
+          log_error "accelerated branch init failed — rebuild aborted"
+          exit 1
+      }
+
+      # accelerated is skipped in the generic target-branch loop above (it is
+      # ordered before bleeding-edge there), so merge its tracked branches here,
+      # now that the branch is cut from the finished bleeding-edge tip.
+      log_step "$(colorize "$BLUE" "Processing target branch: accelerated")"
+      local _accel_indent=$INDENT_LEVEL
+      while IFS= read -r _accel_branch; do
+          [ -z "$_accel_branch" ] && continue
+          if [ "$(is_branch_enabled "accelerated" "$_accel_branch")" = "true" ]; then
+              INDENT_LEVEL=$_accel_indent
+              sync_branch "accelerated" "$_accel_branch"
+          fi
+      done < <(get_tracked_branches_sorted "accelerated")
+      INDENT_LEVEL=$_accel_indent
   fi
 
   # Conflict-marker validation — fail loudly if unresolved markers leaked
