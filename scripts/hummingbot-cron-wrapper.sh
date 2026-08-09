@@ -605,6 +605,37 @@ else
 fi
 
 ###############################################################################
+# Step 3b: Read branch-merge-failure artifact (Defect B)
+# --------------------------------------------------------------------------
+# hummingbot-branch-tracking.sh's own exit code (TRACKING_STATUS above) only
+# reflects whether the SCRIPT completed, not whether every individual branch
+# merge succeeded — sync_branch()'s return value used to be discarded at
+# both call sites. branch_merge_failures.txt is written UNCONDITIONALLY by
+# main() (even with zero failures), so a missing file means the run never
+# reached that point rather than "no failures".
+#
+# Deliberately placed AFTER Steps 2.5/2.75/3 (which gate on the literal
+# string "success") and BEFORE the TRACKING_STATUS mutation below — Step 4
+# does not key off TRACKING_STATUS, so this is the last safe point to rewrite
+# it before write_run_summary without breaking any `[ "$TRACKING_STATUS" =
+# "success" ]` gate upstream.
+###############################################################################
+MERGE_FAILURES_FILE="$RUN_LOG_DIR/branch_merge_failures.txt"
+MERGE_ATTEMPTED=0
+MERGE_FAILURES=0
+if [ -f "$MERGE_FAILURES_FILE" ]; then
+    _mf_header="$(head -n 1 "$MERGE_FAILURES_FILE")"
+    _mf_attempted="$(echo "$_mf_header" | grep -oE 'attempted=[0-9]+' | cut -d= -f2 || true)"
+    _mf_failed="$(echo "$_mf_header" | grep -oE 'failed=[0-9]+' | cut -d= -f2 || true)"
+    [ -n "$_mf_attempted" ] && MERGE_ATTEMPTED="$_mf_attempted"
+    [ -n "$_mf_failed" ] && MERGE_FAILURES="$_mf_failed"
+fi
+
+if [ "$TRACKING_STATUS" = "success" ] && [ "$MERGE_FAILURES" -gt 0 ] 2>/dev/null; then
+    TRACKING_STATUS="success, ${MERGE_FAILURES} of ${MERGE_ATTEMPTED} branches failed"
+fi
+
+###############################################################################
 # Step 4: Interface Compatibility Check
 ###############################################################################
 if [ "$SKIP_INTERFACE" = false ] && { [ "$CYTHON_BUILD_STATUS" = "pass" ] || [ "$CYTHON_BUILD_STATUS" = "skipped (no .pyx/.pxd changes)" ]; }; then
@@ -646,7 +677,7 @@ fi
 ###############################################################################
 log_footer
 
-write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS
+write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS "$MERGE_FAILURES"
 
 # Append submodule sync detail (written after write_run_summary to avoid overwrite)
 if [ "$SUBMODULE_SYNC_STATUS" != "skipped" ]; then
@@ -680,6 +711,17 @@ if [ "$MODULAR_STATUS" != "skipped" ]; then
         echo "  Compat-check (all sub-packages): $COMPAT_RESULT"
         echo "  Lint-boundaries (import-linter): $BOUNDARY_RESULT"
         echo "  Overall:                         $MODULAR_STATUS"
+    } >> "$SUMMARY_FILE"
+fi
+
+# Append branch merge failures detail (written after write_run_summary to avoid overwrite).
+# Body lines from branch_merge_failures.txt are re-indented by 2 spaces here so the
+# "<branch> -> <target>" / "  <reason>" pairs nest visibly under this block's own header.
+if [ "$MERGE_FAILURES" -gt 0 ] 2>/dev/null; then
+    {
+        echo ""
+        echo "Branch merge failures (${MERGE_FAILURES}):"
+        tail -n +2 "$MERGE_FAILURES_FILE" | sed 's/^/  /'
     } >> "$SUMMARY_FILE"
 fi
 

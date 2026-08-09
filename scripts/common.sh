@@ -173,6 +173,54 @@ log_detail() {
 }
 
 ###############################################################################
+# log_merge_failure <merge_log_path> <conflict_files>
+# -----------------------------------------------------------------------------
+# Surfaces WHY a git merge failed. Every merge invocation in this pipeline was
+# historically run with `>& /dev/null`, which discards BOTH stdout and stderr
+# — but `CONFLICT (content): Merge conflict in <path>` is written by git to
+# STDOUT, so failures logged with zero diagnostic text. Call this AFTER
+# capturing conflicted paths (git diff --name-only --diff-filter=U) but
+# BEFORE `git merge --abort`, since the abort wipes the unmerged index.
+#
+# merge_log_path may be "" (or point at a nonexistent/empty file) when the
+# calling code path never captured a dedicated merge log for that particular
+# git invocation — in that case only conflict_files is used, and if that is
+# also empty this emits an explicit placeholder instead of staying blank.
+###############################################################################
+log_merge_failure() {
+    local merge_log_path="$1"
+    local conflict_files="$2"
+    local matched=""
+
+    if [ -n "$merge_log_path" ] && [ -s "$merge_log_path" ]; then
+        matched="$(grep -E '^(CONFLICT|error:|fatal:|Auto-merging .* failed)' "$merge_log_path" 2>/dev/null | head -10 || true)"
+        if [ -z "$matched" ]; then
+            matched="$(grep -v '^[[:space:]]*$' "$merge_log_path" 2>/dev/null | tail -5 || true)"
+        fi
+    fi
+
+    if [ -n "$matched" ]; then
+        while IFS= read -r line; do
+            log_detail "$line"
+        done <<< "$matched"
+    fi
+
+    if [ -n "$conflict_files" ]; then
+        local n
+        n="$(printf '%s\n' "$conflict_files" | grep -c . || true)"
+        log_detail "Conflicted paths (${n}):"
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            log_detail "  $f"
+        done <<< "$conflict_files"
+    fi
+
+    if [ -z "$matched" ] && [ -z "$conflict_files" ]; then
+        log_detail "(git produced no output)"
+    fi
+}
+
+###############################################################################
 # update_status
 # -------------
 # Overwrites STATUS_LOG with a new header for this script run.
@@ -369,7 +417,7 @@ get_indent() { printf "%${INDENT_LEVEL}s" "" | sed "s/ /  /g"; }
 ###############################################################################
 # 10) Shared Summary Writer
 ###############################################################################
-# write_run_summary <target_file> <overall_status> <upstream_status> <tracking_status> <interface_status> <log_path> [errors_array_name]
+# write_run_summary <target_file> <overall_status> <upstream_status> <tracking_status> <interface_status> <log_path> [errors_array_name] [merge_failures]
 #
 # Writes a structured run-summary file. Used by both cron-wrapper (logs/cron/latest_summary.txt)
 # and branch-tracking --rebuild (logs/manual_rebuild_latest.txt).
@@ -382,6 +430,11 @@ get_indent() { printf "%${INDENT_LEVEL}s" "" | sed "s/ /  /g"; }
 #   interface_status  - human label for interface check phase, or "n/a"
 #   log_path          - path to the underlying log file (or "(stdout)" for manual)
 #   errors_array_name - OPTIONAL: name of a bash array variable containing error strings
+#   merge_failures    - OPTIONAL: count of individual branch-merge failures (default 0).
+#                        When overall_status is 0 and this is >0, the overall label
+#                        becomes "DEGRADED (<N> branch merge failures)" instead of "CLEAN" —
+#                        a completed run can still have silently failed individual merges
+#                        (sync_branch's return value used to be discarded by both call sites).
 write_run_summary() {
     local target_file="$1"
     local overall_status="$2"
@@ -390,13 +443,18 @@ write_run_summary() {
     local interface_status="${5:-n/a}"
     local log_path="${6:-(stdout)}"
     local errors_var="${7:-}"
+    local merge_failures="${8:-0}"
 
     local end_time
     end_time="$(date '+%Y-%m-%d %H:%M:%S')"
 
     local overall_label
     if [ "$overall_status" -eq 0 ]; then
-        overall_label="CLEAN"
+        if [ "$merge_failures" -gt 0 ] 2>/dev/null; then
+            overall_label="DEGRADED (${merge_failures} branch merge failures)"
+        else
+            overall_label="CLEAN"
+        fi
     elif [ "$overall_status" -eq 2 ]; then
         overall_label="CONFLICTS"
     else

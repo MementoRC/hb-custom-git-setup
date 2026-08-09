@@ -25,6 +25,19 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 : "${LOCAL_REPO_DIR:="$HOME/PycharmProjects/Hummingbot/hummingbot"}"
 
 ###############################################################################
+# Merge failure tracking (Defect B)
+# ----------------------------------
+# sync_branch()'s return value was previously ignored at BOTH call sites, so
+# main() always returned 0 even when individual branches failed to merge —
+# the cron summary read "Overall: CLEAN" while branches silently failed.
+# Populated by sync_branch() / merge_for_modular_branches() /
+# merge_for_ci_branches(); flushed to $RUN_LOG_DIR/branch_merge_failures.txt
+# at the end of main() (see near the _gate_failed handling).
+###############################################################################
+FAILED_MERGES=()
+ATTEMPTED_MERGES=0
+
+###############################################################################
 # Pixi binary resolution
 # -----------------------------------------------------------------------------
 # `pixi` resolves differently depending on which binary happens to be first on
@@ -1001,6 +1014,7 @@ merge_for_modular_branches() {
             log_error "Modular branch $branch not found — skipping"
             continue
         fi
+        ATTEMPTED_MERGES=$((ATTEMPTED_MERGES + 1))
 
         local ref="$branch"
         if [ "$location" = "remote" ]; then
@@ -1015,9 +1029,14 @@ merge_for_modular_branches() {
             continue
         fi
 
-        if git merge --no-ff "$ref" -m "Auto-merge $branch into $modular_branch" >& /dev/null; then
+        local merge_log; merge_log="$(mktemp)"
+        if git merge --no-ff "$ref" -m "Auto-merge $branch into $modular_branch" > "$merge_log" 2>&1; then
+            rm -f "$merge_log"
             log_result true "$branch merged cleanly"
         else
+            local conflict_files
+            conflict_files="$(git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
+
             # Classify conflicts: logical → abort, format-only → auto-resolve
             local logical_conflicts=() format_only=()
             while IFS= read -r file; do
@@ -1032,6 +1051,13 @@ merge_for_modular_branches() {
             if [ ${#logical_conflicts[@]} -gt 0 ]; then
                 log_error "Logical conflicts in $branch — manual resolution needed:"
                 for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                local _reason
+                _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+                [ -z "$_reason" ] && _reason="no git output captured"
+                log_merge_failure "$merge_log" "$conflict_files"
+                FAILED_MERGES+=("$branch -> $modular_branch")
+                FAILED_MERGES+=("  $_reason")
+                rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 return 1
             fi
@@ -1058,15 +1084,22 @@ merge_for_modular_branches() {
                 # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
                 # and — without this guard — abort the whole rebuild. Abort the in-progress
                 # merge and move on: the base already has the content.
+                rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 log_result true "$branch content already present — no-op, skipped"
             else
-                git commit --no-verify --no-edit >& /dev/null || {
+                if git commit --no-verify --no-edit >& /dev/null; then
+                    rm -f "$merge_log"
+                    log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                else
                     log_error "Failed to commit format-only conflict resolution for $branch"
+                    log_merge_failure "$merge_log" "$conflict_files"
+                    FAILED_MERGES+=("$branch -> $modular_branch")
+                    FAILED_MERGES+=("  commit failed after format-only conflict resolution")
+                    rm -f "$merge_log"
                     git merge --abort >& /dev/null
                     return 1
-                }
-                log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                fi
             fi
         fi
     done < <(echo "$modular_branches")
@@ -1213,6 +1246,7 @@ merge_for_ci_branches() {
             log_error "_for_ci branch $branch not found — skipping"
             continue
         fi
+        ATTEMPTED_MERGES=$((ATTEMPTED_MERGES + 1))
 
         local ref="$branch"
         if [ "$location" = "remote" ]; then
@@ -1227,9 +1261,14 @@ merge_for_ci_branches() {
             continue
         fi
 
-        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" >& /dev/null; then
+        local merge_log; merge_log="$(mktemp)"
+        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" > "$merge_log" 2>&1; then
+            rm -f "$merge_log"
             log_result true "$branch merged cleanly"
         else
+            local conflict_files
+            conflict_files="$(git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
+
             # Classify conflicts: logical → abort, format-only → auto-resolve
             local logical_conflicts=() format_only=()
             while IFS= read -r file; do
@@ -1244,6 +1283,13 @@ merge_for_ci_branches() {
             if [ ${#logical_conflicts[@]} -gt 0 ]; then
                 log_error "Logical conflicts in $branch — manual resolution needed:"
                 for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                local _reason
+                _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+                [ -z "$_reason" ] && _reason="no git output captured"
+                log_merge_failure "$merge_log" "$conflict_files"
+                FAILED_MERGES+=("$branch -> $base_branch")
+                FAILED_MERGES+=("  $_reason")
+                rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 return 1
             fi
@@ -1271,15 +1317,22 @@ merge_for_ci_branches() {
                 # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
                 # and — without this guard — abort the whole rebuild. Abort the in-progress
                 # merge and move on: the base already has the content.
+                rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 log_result true "$branch content already present — no-op, skipped"
             else
-                git commit --no-verify --no-edit >& /dev/null || {
+                if git commit --no-verify --no-edit >& /dev/null; then
+                    rm -f "$merge_log"
+                    log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                else
                     log_error "Failed to commit format-only conflict resolution for $branch"
+                    log_merge_failure "$merge_log" "$conflict_files"
+                    FAILED_MERGES+=("$branch -> $base_branch")
+                    FAILED_MERGES+=("  commit failed after format-only conflict resolution")
+                    rm -f "$merge_log"
                     git merge --abort >& /dev/null
                     return 1
-                }
-                log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                fi
             fi
         fi
     done < <(echo "$for_ci_branches")
@@ -1556,6 +1609,12 @@ run_tests() {
 sync_branch() {
     local target="$1"
     local branch="$2"
+    local merge_log="" merge_log2=""
+    # Function-local RETURN trap: fires on every `return` in this function
+    # (including nested ones inside `{ ... }` failure blocks), regardless of
+    # which of the many exit paths below is taken. Safe to fire even before
+    # either variable is set — `rm -f ""` is a harmless no-op.
+    trap 'rm -f "$merge_log" "$merge_log2" 2>/dev/null' RETURN
 
     log_section "Processing $branch"
 
@@ -1568,6 +1627,7 @@ sync_branch() {
         return 1
     fi
     log_operation "$(colorize "$GREEN" "Branch found: $location")"
+    ATTEMPTED_MERGES=$((ATTEMPTED_MERGES + 1))
 
     # Check mergeability against the base branch (ci-base).  All _for_bleed
     # branches are based on ci-base, not development — checking against
@@ -1611,7 +1671,8 @@ sync_branch() {
         return 0
     fi
 
-    if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
+    merge_log="$(mktemp)"
+    if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $target" > "$merge_log" 2>&1; then
         log_operation "Handle new files"
         handle_new_files || {
           log_error "Failed"
@@ -1627,6 +1688,8 @@ sync_branch() {
         log_result true "Done"
         return 0
     else
+        local conflict_files
+        conflict_files="$(git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
         git_quiet merge --abort
 
         # In rebuild mode, try format-aware merge before worktree rebase.
@@ -1635,7 +1698,8 @@ sync_branch() {
         # format-only), then ruff format fixes the result.
         if [ "$REBUILD_MODE" = "true" ]; then
             log_operation "Merge conflict — trying format-aware merge"
-            if git -c commit.gpgsign=false merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" >& /dev/null; then
+            merge_log2="$(mktemp)"
+            if git -c commit.gpgsign=false merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" > "$merge_log2" 2>&1; then
                 # Merge succeeded with -X theirs — now reformat
                 local ruff_cmd=""
                 if command -v ruff &> /dev/null; then
@@ -1713,7 +1777,14 @@ sync_branch() {
                         indent_pop
                         return 0
                     else
+                        conflict_files="$(git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
                         git_quiet merge --abort
+                        local _reason
+                        _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+                        [ -z "$_reason" ] && _reason="no git output captured"
+                        log_merge_failure "$merge_log" "$conflict_files"
+                        FAILED_MERGES+=("$branch -> $target")
+                        FAILED_MERGES+=("  $_reason")
                         log_result false "Merge failed even after rebase"
                         indent_pop
                         return 1
@@ -1721,6 +1792,13 @@ sync_branch() {
                 else
                     # Auto-rebase failed — leave worktree for manual resolution
                     # Don't abort the rebase — leave it paused so user can resolve
+                    conflict_files="$(cd "$wt_dir" && git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
+                    local _reason
+                    _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+                    [ -z "$_reason" ] && _reason="no git output captured"
+                    log_merge_failure "$merge_log" "$conflict_files"
+                    FAILED_MERGES+=("$branch -> $target")
+                    FAILED_MERGES+=("  $_reason")
                     log_warning "Worktree left for manual resolution: $wt_dir"
                     log_detail "  cd $wt_dir"
                     log_detail "  # resolve conflicts, git add, git rebase --continue"
@@ -1731,11 +1809,23 @@ sync_branch() {
                     return 1
                 fi
             else
+                local _reason
+                _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+                [ -z "$_reason" ] && _reason="no git output captured"
+                log_merge_failure "$merge_log" "$conflict_files"
+                FAILED_MERGES+=("$branch -> $target")
+                FAILED_MERGES+=("  $_reason")
                 log_result false "Merge failed (worktree creation failed)"
                 indent_pop
                 return 1
             fi
         else
+            local _reason
+            _reason="$(grep -E '^(CONFLICT|error:|fatal:)' "$merge_log" 2>/dev/null | head -1 || true)"
+            [ -z "$_reason" ] && _reason="no git output captured"
+            log_merge_failure "$merge_log" "$conflict_files"
+            FAILED_MERGES+=("$branch -> $target")
+            FAILED_MERGES+=("  $_reason")
             log_result false "Merge failed"
             indent_pop
             return 1
@@ -2413,6 +2503,26 @@ main() {
           _gate_failed=true; break
       fi
   done
+
+  # ----------------------------------------------------------------------------
+  # Branch-merge-failure artifact (Defect B). Written UNCONDITIONALLY — even
+  # with zero failures — so the cron wrapper can distinguish "zero failures"
+  # from "artifact missing" (e.g. an older branch-tracking.sh, or a run that
+  # crashed before reaching here). Format:
+  #   # attempted=<N> failed=<M>
+  #   <branch> -> <target>
+  #     <reason>
+  #   ...
+  # main()'s own exit code is intentionally UNCHANGED by this — the run
+  # completing is still a success; individual branch failures are reported
+  # separately via this artifact + write_run_summary's DEGRADED label.
+  # ----------------------------------------------------------------------------
+  {
+      printf '# attempted=%d failed=%d\n' "$ATTEMPTED_MERGES" "$(( ${#FAILED_MERGES[@]} / 2 ))"
+      for _fm_line in "${FAILED_MERGES[@]}"; do
+          printf '%s\n' "$_fm_line"
+      done
+  } > "$RUN_LOG_DIR/branch_merge_failures.txt"
 
   if [ "$_gate_failed" = true ]; then
       log_error "Pre-push gate halted. Pushed: [${_pushed[*]:-none}]. Remaining branches built locally but NOT pushed. Per-layer <branch>-pr snapshots were refreshed for pushed layers only. Fix the failures and re-run."
