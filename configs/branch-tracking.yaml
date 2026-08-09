@@ -287,6 +287,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-evedex-rate-flaky
+        enabled: true
+        tier: infrastructure
+        description: "Fix flaky test_get_evedex_perpetual_prices_handles_unknown_symbols: identical root cause to fix-hyperliquid-rate-flaky -- get_prices' module-level async_ttl_cache keyed on str((self,...)) suffers stale cache hits across test instances via Python heap-address reuse, returning a prior test's empty result. Adds get_prices.cache_clear() after each instantiation in the 5 async tests that lacked it (mirrors test_get_evedex_perpetual_prices_exception_handling, which already had it). This 1-of-6423 intermittent failure halted the ci-base pre-push gate on cron run 20260809_114332, blocking all four tiers from pushing. development ancestry (the test file exists unchanged on development). Commit 5f72fc1c. Added 2026-08-09."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_ci/snapshot-pr-modular-trigger
         enabled: true
         tier: infrastructure
