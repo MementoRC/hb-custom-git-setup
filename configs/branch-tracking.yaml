@@ -400,6 +400,16 @@ target_branches:
         disable_when_in_development: true
         last_reviewed: "2026-08-05"
 
+      - name: _for_bleed/common-data-types-shim
+        enabled: true
+        base: modular
+        tier: feature
+        merge_order: 5
+        description: "Rewrite hummingbot/core/data_type/common.py as an explicit re-export of its 11 public names (OrderType, TradeType, PositionAction, PositionSide, PositionMode, PriceType, LPType, OpenOrder, GroupedSetDict, MarketDict, LazyDict) from the data-type-primitives sub-package. Phase 1 definition-site fix of the post-ADR-0001 extraction plan; commit 71366e9b, GPG-verified. Attacks the DEFINITION SITE rather than the ~387 importing files: the parent and sub-package copies had already converged member-for-member, so no value migration remained -- only a duplicate-class-object problem. Enum equality is identity-based, and TradeFeeBase branches on TradeType/PositionAction equality to pick a fee class, so the duplicate surfaced as a WRONG FEE with no exception. Re-export collapses this to one class object per type; every importing file keeps its import path unchanged. Explicit named imports (not a star import) so the sub-package's extra LimitOrderStatus does not silently widen the parent's public API. Based on modular (NOT ci-base) for the same reason as user-stream-tracker and exceptions-shim: ci-base carries no sub-packages/, no .gitmodules and no install-subpackages, so the import cannot resolve there -- and registering on bleeding-edge.tracked_branches would fail collection (exit=2) every run because that gate runs pytest BEFORE install-subpackages. Verified in-worktree: all 11 names assert identity against data_type_primitives; LazyDict PEP695 __parameters__ (KT, VT) intact; test_trade_fee.py + test_trade_fee_schema_loader.py + test_in_flight_order.py + test_limit_order.py = 43 passed 0 failed; test/hummingbot/core/data_type/ = 111 passed 29 skipped 0 failed; format and lint clean. Known change: OrderType.__module__ becomes data_type_primitives.common (internal isinstance stays valid, one class object; external qualname matchers would need updating -- exceptions.py already took this shift). Unblocks hb-trade-fee and hb-connector-data-types."
+        permanent: false
+        disable_when_in_development: true
+        last_reviewed: "2026-08-10"
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
