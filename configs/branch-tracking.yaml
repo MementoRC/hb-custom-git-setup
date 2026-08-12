@@ -410,6 +410,33 @@ target_branches:
         disable_when_in_development: true
         last_reviewed: "2026-08-10"
 
+      # Moved from bleeding-edge to modular on 2026-08-12: this branch's source consumes
+      # sub-package-provided OrderType conditional members (STOP_LOSS..TRAILING_STOP_LIMIT,
+      # is_delayed_market_type, is_conditional_type) via the common.py re-export shim.
+      # Historical lineage: originally parented to _for_bleed/add-new-order-types (the conditional OrderType enum hub), which remains on the bleeding-edge tier.
+      - name: _for_bleed/kraken-new-order-types
+        enabled: true
+        base: modular
+        parent: _for_bleed/common-data-types-shim  # repointed 2026-08-12: this branch's source needs the common.py re-export shim merged FIRST, since its ~21 OrderType.STOP_LOSS refs resolve only through it; the rebuild tests each branch as it merges, so this ordering is load-bearing. Former parent _for_bleed/add-new-order-types remains on the bleeding-edge tier and is therefore ordering-inert; that dependency is documented in the comment block above this entry.
+        tier: feature
+        description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop)"
+        permanent: false
+        disable_when_in_development: true
+
+      # Moved from bleeding-edge to modular on 2026-08-12: this branch's source consumes
+      # sub-package-provided OrderType conditional members (STOP_LOSS..TRAILING_STOP_LIMIT,
+      # is_delayed_market_type, is_conditional_type) via the common.py re-export shim.
+      # _for_bleed/position-exchange-executor: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. RE-ENABLED 2026-06-18: same lost-promotion c83247374 (seed-v2 reseed); recovered via rebuild loop.
+      - name: _for_bleed/position-exchange-executor
+        enabled: true  # re-enabled 2026-06-18 with hub add-new-order-types: same lost-promotion c83247374 (seed-v2 reseed); position_on_exchange_executor/ absent from ci-base — recovered via rebuild loop.
+        base: modular
+        tier: feature
+        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. 2026-07-05: merged add-executor-factory in (provides strategy_v2/executors/executor_factory.py) so standalone CI collects; diamond dep (needs both kraken-new-order-types parent AND add-executor-factory)."
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/kraken-new-order-types
+        last_reviewed: "2026-06-13"
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
@@ -533,15 +560,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/kraken-new-order-types
-        enabled: true
-        base: ci-base
-        parent: _for_bleed/add-new-order-types  # re-added 2026-06-18: hub demoted from ci-base (promotion c83247374 dropped in reseed), so explicit parent ordering required again
-        tier: feature
-        description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop)"
-        permanent: false
-        disable_when_in_development: true
-
       # _for_bleed/logger-callback-refactor: RETIRED 2026-08-06 — its whole payload (register_notify_handler / register_network_handler replacing the HummingbotApplication.main_application() lookup) is already in the hb-logger sub-package, which modular re-exports. Patching the now-deleted local class produced an invalid logger.py on bleeding-edge. local+origin deleted, entry purged. Deleted tip d2e8583174 -- recover with: git branch _for_bleed/logger-callback-refactor d2e8583174
 
       # _for_bleed/logger-type-cleanup: RETIRED 2026-08-06 — its logger.py hunks patched the local class that modular already replaced with a re-export. Its three genuinely-independent fixes (cli_handler StreamHandler[TextIO]; log_encoder typing + is_dataclass class-vs-instance guard; struct_logger _log missing positional args) were salvaged to _for_bleed/logger-type-fixes (commit cc4d7064). local+origin deleted, entry purged. Deleted tip 099acc41b1 -- recover with: git branch _for_bleed/logger-type-cleanup 099acc41b1
@@ -556,16 +574,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
         last_reviewed: "2026-08-06"
-
-      # _for_bleed/position-exchange-executor: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. RE-ENABLED 2026-06-18: same lost-promotion c83247374 (seed-v2 reseed); recovered via rebuild loop.
-      - name: _for_bleed/position-exchange-executor
-        enabled: true  # re-enabled 2026-06-18 with hub add-new-order-types: same lost-promotion c83247374 (seed-v2 reseed); position_on_exchange_executor/ absent from ci-base — recovered via rebuild loop.
-        tier: feature
-        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. 2026-07-05: merged add-executor-factory in (provides strategy_v2/executors/executor_factory.py) so standalone CI collects; diamond dep (needs both kraken-new-order-types parent AND add-executor-factory)."
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/kraken-new-order-types
-        last_reviewed: "2026-06-13"
 
       # hb-event-bus parity: 10-branch Cython migration suite
       # orderbook is the Cython cimport unblocker (must land first).
