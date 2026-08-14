@@ -575,6 +575,15 @@ target_branches:
         disable_when_in_development: true
         last_reviewed: "2026-08-06"
 
+      - name: _for_bleed/decibel-tradetype-float
+        enabled: true
+        base: ci-base
+        tier: feature
+        description: "One-line correctness fix: decibel_perpetual_api_order_book_data_source.py:287 emitted trade_type as a bare int (TradeType.BUY.value) while all 54 other production writers wrap it in float(). Works today only because order_book_tracker.py:697 compares 2 == 2.0, but breaks any type-sensitive consumer -- isinstance dispatch, strict JSON schema, typed serializer, or the accelerated tier's f64 paths. base:ci-base because TradeType resolves on any tier and the change introduces no sub-package dependency."
+        permanent: false
+        disable_when_in_development: true
+        last_reviewed: "2026-08-14"
+
       # hb-event-bus parity: 10-branch Cython migration suite
       # orderbook is the Cython cimport unblocker (must land first).
       # The other 9 depend on orderbook landing and becoming available as a cimport source.
