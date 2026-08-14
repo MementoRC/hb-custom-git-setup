@@ -38,6 +38,49 @@ FAILED_MERGES=()
 ATTEMPTED_MERGES=0
 
 ###############################################################################
+# Pytest gate exclusion set (global — NOT local to main())
+# -----------------------------------------------------------------------------
+# Both run_tests() (the merge-time selective/escape-hatch pytest runs) and
+# main()'s pre-push CI gate MUST apply the identical --ignore/--deselect set.
+# This used to be `local -a _pytest_ignores` declared inside main(), which made
+# it invisible to run_tests() — the merge-time gate ran pytest with ZERO
+# exclusions, making it stricter than the push gate and reverting branches for
+# failures (23 optional-connector collection errors, a quarantined hyperliquid
+# test) the push gate already forgives. Hoisted here so every invocation sees
+# the same set.
+###############################################################################
+PYTEST_GATE_ARGS=(
+    --timeout=30
+    --ignore=test/mock
+    --ignore=test/hummingbot/connector/exchange/ndax/
+    --ignore=test/hummingbot/connector/derivative/dydx_v4_perpetual/
+    --ignore=test/hummingbot/connector/derivative/decibel_perpetual/
+    --ignore=test/hummingbot/core/rate_oracle/sources/test_decibel_perpetual_rate_source.py
+    --ignore=test/hummingbot/connector/exchange/vertex/
+    --ignore=test/hummingbot/connector/exchange/ascend_ex/
+    --ignore=test/hummingbot/core/rate_oracle/sources/test_ascend_ex_rate_source.py
+    --ignore=test/hummingbot/connector/exchange/cube/
+    --ignore=test/hummingbot/core/rate_oracle/sources/test_cube_rate_source.py
+    --ignore=test/hummingbot/data_feed/candles_feed/ascend_ex_spot_candles/
+    --ignore=test/hummingbot/connector/gateway/
+    --ignore=test/connector/utilities/oms_connector/
+    --ignore=test/hummingbot/strategy/amm_arb/
+    --ignore=test/hummingbot/strategy/cross_exchange_market_making/
+    # Quarantined 2026-08-01: 42 pre-existing test failures across backpack_perpetual
+    # margin math, hyperliquid_perpetual price quantization, pacifica_perpetual
+    # symbol-map KeyError, lp_executor/orchestrator/twap close-type+hold-accounting —
+    # see gate_pytest_ci-base.log run 20260801_093708 for full detail. Real bugs, not
+    # infra — tracked as follow-up, not fixed here.
+    --ignore=test/hummingbot/connector/derivative/backpack_perpetual/test_backpack_perpetual_derivative.py
+    --deselect=test/hummingbot/connector/derivative/hyperliquid_perpetual/test_hyperliquid_perpetual_derivative.py::HyperliquidPerpetualDerivativeTests::test_quantize_order_price_aligns_to_min_price_increment
+    --ignore=test/hummingbot/connector/derivative/pacifica_perpetual/test_pacifica_perpetual_api_config_key.py
+    --ignore=test/hummingbot/connector/derivative/pacifica_perpetual/test_pacifica_perpetual_derivative.py
+    --ignore=test/hummingbot/strategy_v2/executors/lp_executor/test_lp_executor.py
+    --ignore=test/hummingbot/strategy_v2/executors/test_executor_orchestrator.py
+    --ignore=test/hummingbot/strategy_v2/executors/twap_executor/test_twap_executor.py
+)
+
+###############################################################################
 # Pixi binary resolution
 # -----------------------------------------------------------------------------
 # `pixi` resolves differently depending on which binary happens to be first on
@@ -1556,7 +1599,7 @@ run_tests() {
             test_count="$(echo "$test_files" | wc -l)"
             log_step "Selector chose $test_count tests; running pixi pytest"
             # shellcheck disable=SC2086
-            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest $test_files -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "pytest PASS ($test_count tests); see $(basename "$pytest_log")"
@@ -1584,7 +1627,7 @@ run_tests() {
                 log_result false "Cython build FAILED before full suite; see $build_log"
                 return 1
             fi
-            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "Full-suite pytest PASS; see $(basename "$pytest_log")"
@@ -2294,37 +2337,6 @@ main() {
       log_error "pixi not found — cannot run CI-identical gate; refusing to push unverified branches"
       exit 1
   fi
-  local -a _pytest_ignores=(
-      --timeout=30
-      --ignore=test/mock
-      --ignore=test/hummingbot/connector/exchange/ndax/
-      --ignore=test/hummingbot/connector/derivative/dydx_v4_perpetual/
-      --ignore=test/hummingbot/connector/derivative/decibel_perpetual/
-      --ignore=test/hummingbot/core/rate_oracle/sources/test_decibel_perpetual_rate_source.py
-      --ignore=test/hummingbot/connector/exchange/vertex/
-      --ignore=test/hummingbot/connector/exchange/ascend_ex/
-      --ignore=test/hummingbot/core/rate_oracle/sources/test_ascend_ex_rate_source.py
-      --ignore=test/hummingbot/connector/exchange/cube/
-      --ignore=test/hummingbot/core/rate_oracle/sources/test_cube_rate_source.py
-      --ignore=test/hummingbot/data_feed/candles_feed/ascend_ex_spot_candles/
-      --ignore=test/hummingbot/connector/gateway/
-      --ignore=test/connector/utilities/oms_connector/
-      --ignore=test/hummingbot/strategy/amm_arb/
-      --ignore=test/hummingbot/strategy/cross_exchange_market_making/
-      # Quarantined 2026-08-01: 42 pre-existing test failures across backpack_perpetual
-      # margin math, hyperliquid_perpetual price quantization, pacifica_perpetual
-      # symbol-map KeyError, lp_executor/orchestrator/twap close-type+hold-accounting —
-      # see gate_pytest_ci-base.log run 20260801_093708 for full detail. Real bugs, not
-      # infra — tracked as follow-up, not fixed here.
-      --ignore=test/hummingbot/connector/derivative/backpack_perpetual/test_backpack_perpetual_derivative.py
-      --deselect=test/hummingbot/connector/derivative/hyperliquid_perpetual/test_hyperliquid_perpetual_derivative.py::HyperliquidPerpetualDerivativeTests::test_quantize_order_price_aligns_to_min_price_increment
-      --ignore=test/hummingbot/connector/derivative/pacifica_perpetual/test_pacifica_perpetual_api_config_key.py
-      --ignore=test/hummingbot/connector/derivative/pacifica_perpetual/test_pacifica_perpetual_derivative.py
-      --ignore=test/hummingbot/strategy_v2/executors/lp_executor/test_lp_executor.py
-      --ignore=test/hummingbot/strategy_v2/executors/test_executor_orchestrator.py
-      --ignore=test/hummingbot/strategy_v2/executors/twap_executor/test_twap_executor.py
-  )
-
   # accelerated is gated LAST, after ci-base/modular/$FEATURE_BRANCH have already
   # been gated + pushed inside this same loop. This ordering IS the isolation
   # mechanism: a `break` triggered by an accelerated-only failure (quality/tests/
@@ -2418,8 +2430,8 @@ main() {
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${_pytest_ignores[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
-          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${_pytest_ignores[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${PYTEST_GATE_ARGS[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
+          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${PYTEST_GATE_ARGS[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
           touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
