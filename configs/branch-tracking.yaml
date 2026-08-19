@@ -329,6 +329,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/fix-user-balances-optional
+        enabled: true
+        tier: infrastructure
+        description: "Write UserBalances._logger as `HummingbotLogger | None` so it survives the live py312 transform. The transform (run_py312_transforms_for_changed) adds `from __future__ import annotations` and lets ruff F401 drop the now-unused `from typing import Optional`, but its AST visitor misses bare class-body annotated assignments — the same blind spot Pass 1.6 was added for, in a category that net does not cover (List/Dict/Set/FrozenSet/Tuple/Type, not Optional/Union). The leftover `Optional[HummingbotLogger]` failed ruff F821 on ci-base and halted the pre-push gate for ALL tiers on the 2026-08-17 rebuild. Runtime was never affected (future-import makes the annotation a lazy string). NOT upstream-lag: development has the correct import and no future-import, so this can never land in development — hence disable_when_in_development:false. Retire once the transform is hardened (extend Pass 1.6 to Optional/Union + add post-autofix F821 verification). Branch off origin/development (base b9f6778f), commit d21d32a0, GPG-signed. Added 2026-08-18."
+        permanent: false
+        disable_when_in_development: false
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
