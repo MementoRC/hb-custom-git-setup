@@ -447,7 +447,7 @@ def split_top_level(inner):
             parts.append(inner[start:i])
             start = i + 1
     parts.append(inner[start:])
-    return [p.strip() for p in parts]
+    return [p.strip() for p in parts if p.strip()]
 
 
 def convert_optional_union(text):
@@ -463,7 +463,8 @@ def convert_optional_union(text):
             break
         inner = text[open_idx + 1:close_idx]
         if m.group(1) == "Optional":
-            replacement = inner.strip() + " | None"
+            optional_parts = split_top_level(inner)
+            replacement = (optional_parts[0] if optional_parts else "") + " | None"
         else:
             replacement = " | ".join(split_top_level(inner))
         text = text[:m.start()] + replacement + text[close_idx + 1:]
@@ -502,8 +503,13 @@ PYEOF
         local f821_output
         f821_output=$("$ruff_cmd" check --no-cache --select F821 "$@" 2>&1)
         if [ $? -ne 0 ]; then
-            log_error "FATAL: PY312 TRANSFORM produced undefined-name (F821) errors — this is transform damage, not branch content:"
+            log_error "FATAL: PY312 TRANSFORM produced undefined names or invalid syntax — this is transform damage, not branch content:"
             while IFS= read -r line; do
+                # Suppress pre-existing "Invalid # noqa directive" noise (unrelated
+                # to this gate) so real F821/syntax diagnostics aren't buried.
+                case "$line" in
+                    *"Invalid # noqa directive"*) continue ;;
+                esac
                 log_error "  $line"
             done <<< "$f821_output"
             log_error "Diagnose Pass 1.6 / ruff --unsafe-fixes interaction on the files above; do not treat this as a branch defect."
