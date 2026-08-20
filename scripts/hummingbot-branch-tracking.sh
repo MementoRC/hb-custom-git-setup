@@ -383,7 +383,7 @@ for path in sys.argv[1:]:
     open(path, 'w').write(text)
 PYEOF
 
-    # Pass 1.6: PEP-585 residual lowercasing — refactor-py312 lowercases most
+    # Pass 1.6: PEP-585/604 residual conversion — refactor-py312 lowercases most
     # typing generics (List/Dict/Set/…) to their builtin equivalents and prunes
     # the now-unused typing import, but its AST visitor misses some annotation
     # positions (notably `-> Set[str]` return annotations).  Once ruff strips the
@@ -392,6 +392,14 @@ PYEOF
     # (connectable_exchange_names).  This pass lowercases any REMAINING
     # builtin-equivalent capital generics BEFORE ruff prunes imports, so
     # annotations and imports stay consistent.  Mirrors the StrEnum net above.
+    #
+    # It also converts any REMAINING `Optional[X]` / `Union[A, B, …]` to PEP 604
+    # (`X | None` / `A | B | …`), including bare class-body and module-level
+    # annotated assignments (`name: Optional[X] = ...`) that the
+    # signature-oriented refactor-py312 passes don't touch — this is exactly
+    # what broke hummingbot/user/user_balances.py:18
+    # (`_logger: Optional[HummingbotLogger] = None`): ruff pruned the now-unused
+    # `from typing import Optional` and the bare `Optional[...]` became F821.
     python3 - "$@" << 'PYEOF'
 import re
 import sys
@@ -407,14 +415,69 @@ GENERICS = {
 }
 # Match a bare capital generic followed by `[`, not preceded by an identifier
 # char or dot — so `typing.Set[`, `MySet[`, `foo.List[` are left untouched.
-pattern = re.compile(r"(?<![\w.])(" + "|".join(GENERICS) + r")\[")
+GENERICS_PATTERN = re.compile(r"(?<![\w.])(" + "|".join(GENERICS) + r")\[")
+
+# Optional[...] / Union[...] need balanced-bracket matching (not a simple
+# identifier swap) since the replacement restructures around the brackets.
+OPTIONAL_UNION_PATTERN = re.compile(r"(?<![\w.])(Optional|Union)\[")
+
+
+def find_matching_bracket(text, open_idx):
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def split_top_level(inner):
+    parts = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(inner):
+        if ch in "[(":
+            depth += 1
+        elif ch in "])":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
+    parts.append(inner[start:])
+    return [p.strip() for p in parts]
+
+
+def convert_optional_union(text):
+    changed = True
+    while changed:
+        changed = False
+        m = OPTIONAL_UNION_PATTERN.search(text)
+        if not m:
+            break
+        open_idx = m.end() - 1
+        close_idx = find_matching_bracket(text, open_idx)
+        if close_idx == -1:
+            break
+        inner = text[open_idx + 1:close_idx]
+        if m.group(1) == "Optional":
+            replacement = inner.strip() + " | None"
+        else:
+            replacement = " | ".join(split_top_level(inner))
+        text = text[:m.start()] + replacement + text[close_idx + 1:]
+        changed = True
+    return text
+
 
 for path in sys.argv[1:]:
     try:
         text = open(path).read()
     except OSError:
         continue
-    new = pattern.sub(lambda m: GENERICS[m.group(1)] + "[", text)
+    new = GENERICS_PATTERN.sub(lambda m: GENERICS[m.group(1)] + "[", text)
+    new = convert_optional_union(new)
     if new != text:
         open(path, "w").write(new)
 PYEOF
@@ -427,6 +490,25 @@ PYEOF
     # Pass 3: format changed files.
     if [ -n "$ruff_cmd" ]; then
         "$ruff_cmd" format "$@" >& /dev/null || true
+    fi
+
+    # Pass 4: verify the autofix above didn't manufacture an undefined name.
+    # ruff's --unsafe-fixes (Pass 2) can prune an import that a residual
+    # annotation still needs (see Pass 1.6) — without this gate that F821 ships
+    # silently and only surfaces much later at the pre-push quality gate, where
+    # it looks like branch content instead of transform damage. --no-cache is
+    # required: a stale ruff cache has previously masked a real failure here.
+    if [ -n "$ruff_cmd" ]; then
+        local f821_output
+        f821_output=$("$ruff_cmd" check --no-cache --select F821 "$@" 2>&1)
+        if [ $? -ne 0 ]; then
+            log_error "FATAL: PY312 TRANSFORM produced undefined-name (F821) errors — this is transform damage, not branch content:"
+            while IFS= read -r line; do
+                log_error "  $line"
+            done <<< "$f821_output"
+            log_error "Diagnose Pass 1.6 / ruff --unsafe-fixes interaction on the files above; do not treat this as a branch defect."
+            return 1
+        fi
     fi
 
     # Stage and commit if anything changed.
