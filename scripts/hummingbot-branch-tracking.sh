@@ -450,11 +450,23 @@ def split_top_level(inner):
     return [p.strip() for p in parts if p.strip()]
 
 
+def is_dynamic(inner):
+    # A call or a concatenation inside the brackets means the union members are
+    # computed at runtime, e.g. `Union[tuple(NETWORK_MODES.values())]` or
+    # `Union[(str, Dict) + tuple(NETWORK_MODES.values())]` in
+    # hummingbot/connector/exchange/injective_v2/injective_v2_utils.py.
+    # split_top_level() sees ONE top-level part there (the comma is nested), so
+    # `" | ".join(...)` would emit that part bare and drop the `Union[...]`
+    # wrapper — then ruff F401 prunes the now-unused `Union` import and pydantic
+    # v2 dies at import time with "Forward references must evaluate to types",
+    # aborting pytest collection tree-wide. Leave these annotations alone.
+    return "(" in inner or "+" in inner
+
+
 def convert_optional_union(text):
-    changed = True
-    while changed:
-        changed = False
-        m = OPTIONAL_UNION_PATTERN.search(text)
+    pos = 0
+    while True:
+        m = OPTIONAL_UNION_PATTERN.search(text, pos)
         if not m:
             break
         open_idx = m.end() - 1
@@ -462,13 +474,19 @@ def convert_optional_union(text):
         if close_idx == -1:
             break
         inner = text[open_idx + 1:close_idx]
+        if is_dynamic(inner):
+            # Preserve the wrapper; resume scanning past it.
+            pos = close_idx + 1
+            continue
         if m.group(1) == "Optional":
             optional_parts = split_top_level(inner)
             replacement = (optional_parts[0] if optional_parts else "") + " | None"
         else:
             replacement = " | ".join(split_top_level(inner))
         text = text[:m.start()] + replacement + text[close_idx + 1:]
-        changed = True
+        # Re-scan from the start of the replacement so nested Optional/Union
+        # inside it still get converted.
+        pos = m.start()
     return text
 
 
