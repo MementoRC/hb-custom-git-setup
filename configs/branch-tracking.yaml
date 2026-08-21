@@ -344,6 +344,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/fix-is-union-pep604
+        enabled: true
+        tier: infrastructure
+        description: "Teach ClientConfigAdapter._is_union to recognize PEP 604 unions. It tested `hasattr(t, '__origin__') and t.__origin__ == Union`, which only matches legacy `Union[A, B]`; a PEP 604 `A | B` has get_origin -> types.UnionType, so the check returned False and _get_printable_value emitted '' instead of the submodel title. Latent on development (the field is still written `Union[NestedModelTwo, NestedModelOne]` there); manifests on ci-base because the py312 transform rewrites that annotation to `NestedModelTwo | NestedModelOne` — the annotation rewriter outrunning the code that reads annotations. Failed test_list_configs_pydantic_model and test_traverse with \"'nested_mode_one' != ''\", the last 2 failures blocking the ci-base pre-push gate after the Union[tuple(...)] collection fix. Fix is `get_origin(t) in (Union, types.UnionType)` — a logic change inside a function body, so the transform will not rewrite it and it survives every rebuild. Verified in a ci-base worktree: 2 target tests pass, test/hummingbot/client/ 207 passed / 0 failed, format+lint clean. Branch based off origin/development, commit d5c2ca75, GPG-signed. Added 2026-08-21."
+        permanent: false
+        disable_when_in_development: true
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
