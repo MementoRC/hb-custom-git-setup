@@ -34,14 +34,32 @@ ln -sfn "$RUN_LOG_DIR" "${LOG_PATH}/runs/latest"
 ###############################################################################
 # 2) PATH Configuration for Cron Environments
 ###############################################################################
-# Ensure conda-managed tools (pixi) are reachable under cron's minimal PATH.
-# /opt/conda/bin holds the pixi binary on this host; cron does not inherit
-# the user's interactive PATH, so prepend it explicitly. Idempotent: only
-# prepends when not already present.
-case ":${PATH}:" in
-    *:/opt/conda/bin:*) ;;
-    *) export PATH="/opt/conda/bin:${PATH}" ;;
-esac
+# Resolve pixi explicitly. Cron does not inherit the user's interactive PATH,
+# and the binary has moved between installs before: a stale copy under
+# /opt/conda/bin was removed 2026-08-20, which silently broke every cron run
+# from 2026-08-21 onward with a bare "pixi: command not found" at the gate.
+# Probe canonical locations in priority order and export the first that holds
+# an executable pixi. $HOME/.pixi/bin is FIRST deliberately -- it is the
+# canonical install; duplicate copies elsewhere have carried wrong versions.
+if ! command -v pixi >/dev/null 2>&1; then
+    _pixi_candidates=(
+        "$HOME/.pixi/bin"
+        "/usr/local/bin"
+        "/opt/conda/bin"
+    )
+    for _pixi_dir in "${_pixi_candidates[@]}"; do
+        if [ -x "${_pixi_dir}/pixi" ]; then
+            export PATH="${_pixi_dir}:${PATH}"
+            break
+        fi
+    done
+    unset _pixi_dir
+    if ! command -v pixi >/dev/null 2>&1; then
+        echo "ERROR: pixi not found on PATH. Tried: ${_pixi_candidates[*]}" >&2
+        echo "       Install pixi or add its directory to PATH before running cron scripts." >&2
+    fi
+    unset _pixi_candidates
+fi
 
 ###############################################################################
 # 3) Color & Indentation Definitions
