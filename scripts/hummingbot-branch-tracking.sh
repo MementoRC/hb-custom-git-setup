@@ -996,6 +996,48 @@ PYEOF
 # 2. Merges sub-package wiring branches listed in modular.tracked_branches.
 #    (see merge_for_modular_branches below)
 ###############################################################################
+# Decide whether the two sides of a conflicted file differ ONLY by formatting.
+# Returns 0 (true) when both sides normalize to byte-identical text under ruff,
+# 1 otherwise. Anything that cannot be proven format-only -- a non-Python file,
+# a missing merge stage (add/add, delete/modify), an unavailable formatter -- is
+# reported as NOT format-only, so the caller fails loudly instead of guessing.
+#
+# This exists because classifying conflicts by FILENAME and auto-resolving the
+# rest to the incoming branch silently deletes this branch's own content. That
+# is how modular lost the executor mixin inheritance and the
+# @ExecutorFactory.register decorators in rebuild 20260823_160402.
+conflict_is_format_only() {
+    local file="$1"
+    local ruff_cmd ours theirs rc=1
+
+    case "$file" in
+        *.py) ;;
+        *) return 1 ;;
+    esac
+
+    if command -v ruff >/dev/null 2>&1; then
+        ruff_cmd="ruff"
+    elif command -v pixi >/dev/null 2>&1; then
+        ruff_cmd="pixi run -e ci ruff"
+    else
+        return 1
+    fi
+
+    ours=$(mktemp --suffix=.py) || return 1
+    theirs=$(mktemp --suffix=.py) || { rm -f "$ours"; return 1; }
+
+    if git show ":2:$file" > "$ours" 2>/dev/null &&
+       git show ":3:$file" > "$theirs" 2>/dev/null &&
+       $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
+       $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1 &&
+       cmp -s "$ours" "$theirs"; then
+        rc=0
+    fi
+
+    rm -f "$ours" "$theirs"
+    return $rc
+}
+
 sync_modular_branch() {
     local modular_branch="$1"
     local base_branch="$2"
@@ -1031,19 +1073,26 @@ sync_modular_branch() {
                    -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
                 log_operation "Merged $base_branch into $modular_branch"
             else
-                # Classify conflicts: logical → abort, format-only → auto-resolve
+                # Classify conflicts: logical → abort, format-only → auto-resolve.
+                # Files that carry semantic config are always logical. For every other
+                # file the format-only claim is VERIFIED by content, never assumed from
+                # the filename: both sides are normalized with ruff and compared.
                 local logical_conflicts=() format_only=()
                 while IFS= read -r file; do
                     case "$file" in
                         pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
                             logical_conflicts+=("$file") ;;
                         *)
-                            format_only+=("$file") ;;
+                            if conflict_is_format_only "$file"; then
+                                format_only+=("$file")
+                            else
+                                logical_conflicts+=("$file")
+                            fi ;;
                     esac
                 done < <(git diff --name-only --diff-filter=U)
 
                 if [ ${#logical_conflicts[@]} -gt 0 ]; then
-                    log_error "Logical conflicts merging $base_branch into $modular_branch — manual resolution needed:"
+                    log_error "Logical conflicts merging $base_branch into $modular_branch — manual resolution needed (auto-resolving these would discard $modular_branch content):"
                     for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
                     git merge --abort >& /dev/null
                     return 1
