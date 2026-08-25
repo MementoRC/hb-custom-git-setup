@@ -139,8 +139,12 @@ target_branches:
 
       # _for_ci/ruff-external-mock: RETIRED 2026-07-05 — external=["mock"] fix moved to rebuild-script post-processing; local deleted (no origin ref), entry purged
 
+      # DISABLED 2026-08-25: carries ci-base ancestry; merge drops upstream a924599dda
+      # remove_secure_config cleanup from connect_command.py -> 1 ci-base gate failure.
+      # NOTE: its real payload is "# noqa: mock" additions across 9 test files - if the ci-base
+      # quality/lint gate now fails, regenerate this as a clean development-based branch.
       - name: _for_ci/wallet-key-noqa-missing
-        enabled: true
+        enabled: false
         tier: infrastructure
         description: "Add # noqa: mock to 13 missing hex-string lines across 9 test files (vertex, hyperliquid, injective_v2, derive, bitmart). detect-wallet-private-key pre-commit hook flags mock blockchain hex strings; these files are touched by the py312 transform making them changed vs development and triggering the gate. Commit a2cb992f, GPG-signed. Added 2026-06-24."
         permanent: false
@@ -217,8 +221,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      # DISABLED 2026-08-25: carries ci-base ancestry; its stale hyperliquid snapshot (6a3ddb98f2)
+      # reverts upstream a924599dda builder-fee sources on every rebuild -> 6 ci-base gate failures.
       - name: _for_ci/restore-stale-seed-connector-sources
-        enabled: true
+        enabled: false
         tier: infrastructure
         description: "Restore binance_perpetual_api_order_book_data_source.py + binance_perpetual_user_stream_data_source.py + bitget_perpetual_derivative.py to origin/development content. The frozen ci-base-seed-v1 py312 mass-transform drags stale copies of these SOURCE files through the rebuild merge while their TEST files track development, so current tests run against stale source and abort the ci-base test gate (rebuild 20260722_164432: 4 binance + 2 bitget failures). Both connectors internally consistent on development (not upstream-red). Re-creates the prematurely-retired _for_ci/fix-bitget-limit-maker-order-type. Class-S restore: branch has ci-base ancestry (a development-based fix is a merge no-op). Commit b8fdce85, GPG-signed. Added 2026-07-22. Also restores hyperliquid_auth.py + hyperliquid_perpetual_auth.py + hyperliquid_exchange.py + hyperliquid_perpetual_derivative.py to origin/development content — same Class-S signature (35 key-authority failures on rebuild 20260819_111808: AttributeError no attribute 'is_key_authorized' / '_verify_key_authority'). Restored content re-modernized to ci-base py312 annotation style (future-import, PEP 585/604) so the full-file restore merges clean. Commit 6a3ddb98, GPG-signed, separate from b8fdce85 so either half can be reverted independently. Added 2026-08-20. Superseded by a seed re-cut dropping the py312 mass-transform."
         permanent: false
