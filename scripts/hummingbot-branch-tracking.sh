@@ -1038,6 +1038,94 @@ conflict_is_format_only() {
     return $rc
 }
 
+###############################################################################
+# Decide whether ci-base's side of a conflict is a strict subset of modular's.
+# Returns 0 (true) ONLY when every line ci-base (theirs, stage :3) added or
+# removed relative to the merge base (stage :1) is ALSO present in modular's
+# (ours, stage :2) corresponding added/removed set. In that case ci-base
+# contributes no unique content and it is safe to KEEP OURS (modular) whole
+# instead of aborting the merge as a logical conflict.
+#
+# Returns 1 (false — must be treated as a logical conflict, do NOT
+# auto-resolve) for anything that cannot be proven this way: a non-Python
+# file, a missing merge stage (e.g. add/add with no common ancestor), an
+# unavailable formatter, or any added/removed line on ci-base's side that
+# modular's side lacks. This is intentionally conservative: a false positive
+# here would silently discard real ci-base content, which is worse than a
+# false "logical conflict" that just forces manual resolution.
+###############################################################################
+conflict_ci_base_is_subset() {
+    local file="$1"
+    local ruff_cmd rc=1
+    local base ours theirs diff_base_theirs diff_base_ours
+
+    case "$file" in
+        *.py) ;;
+        *) return 1 ;;
+    esac
+
+    if command -v ruff >/dev/null 2>&1; then
+        ruff_cmd="ruff"
+    elif command -v pixi >/dev/null 2>&1; then
+        ruff_cmd="pixi run -e ci ruff"
+    else
+        return 1
+    fi
+
+    base=$(mktemp --suffix=.py) || return 1
+    ours=$(mktemp --suffix=.py) || { rm -f "$base"; return 1; }
+    theirs=$(mktemp --suffix=.py) || { rm -f "$base" "$ours"; return 1; }
+    diff_base_theirs=$(mktemp) || { rm -f "$base" "$ours" "$theirs"; return 1; }
+    diff_base_ours=$(mktemp) || { rm -f "$base" "$ours" "$theirs" "$diff_base_theirs"; return 1; }
+
+    # git show ":1:$file" fails on an add/add conflict (no merge base) — that
+    # case cannot be proven a subset, so fall through to the cleanup/return 1.
+    if git show ":1:$file" > "$base" 2>/dev/null &&
+       git show ":2:$file" > "$ours" 2>/dev/null &&
+       git show ":3:$file" > "$theirs" 2>/dev/null; then
+
+        # The merge-base blob is only a common reference point for computing
+        # the two changed-line sets below — it is never compared for equality
+        # itself, so it need not be formatter-clean. If ruff can't format it
+        # (observed: rc=2, empty stderr, on otherwise-valid ancestor blobs),
+        # fall back to the raw (unformatted) base blob rather than bailing.
+        # An unformatted base perturbs diff_base_theirs and diff_base_ours
+        # symmetrically, so the subset comparison below still holds.
+        $ruff_cmd format --quiet "$base" >/dev/null 2>&1
+
+        if $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
+           $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1; then
+
+            diff -u0 "$base" "$theirs" > "$diff_base_theirs"
+            diff -u0 "$base" "$ours" > "$diff_base_ours"
+
+            local added_theirs removed_theirs added_ours removed_ours
+            added_theirs=$(grep -E '^\+' "$diff_base_theirs" | grep -v '^+++ ' | sed 's/^\+//')
+            removed_theirs=$(grep -E '^-' "$diff_base_theirs" | grep -v '^--- ' | sed 's/^-//')
+            added_ours=$(grep -E '^\+' "$diff_base_ours" | grep -v '^+++ ' | sed 's/^\+//')
+            removed_ours=$(grep -E '^-' "$diff_base_ours" | grep -v '^--- ' | sed 's/^-//')
+
+            # If ci-base has no changes at all relative to the base, it
+            # contributed nothing and the subset check trivially holds.
+            local subset=1
+            if [ -n "$added_theirs" ]; then
+                while IFS= read -r line; do
+                    grep -qxF "$line" <<< "$added_ours" || { subset=0; break; }
+                done <<< "$added_theirs"
+            fi
+            if [ "$subset" -eq 1 ] && [ -n "$removed_theirs" ]; then
+                while IFS= read -r line; do
+                    grep -qxF "$line" <<< "$removed_ours" || { subset=0; break; }
+                done <<< "$removed_theirs"
+            fi
+            [ "$subset" -eq 1 ] && rc=0
+        fi
+    fi
+
+    rm -f "$base" "$ours" "$theirs" "$diff_base_theirs" "$diff_base_ours"
+    return $rc
+}
+
 sync_modular_branch() {
     local modular_branch="$1"
     local base_branch="$2"
@@ -1073,11 +1161,15 @@ sync_modular_branch() {
                    -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
                 log_operation "Merged $base_branch into $modular_branch"
             else
-                # Classify conflicts: logical → abort, format-only → auto-resolve.
-                # Files that carry semantic config are always logical. For every other
-                # file the format-only claim is VERIFIED by content, never assumed from
-                # the filename: both sides are normalized with ruff and compared.
-                local logical_conflicts=() format_only=()
+                # Classify conflicts: logical → abort, format-only → auto-resolve
+                # (keep ci-base), ci-base-subset → auto-resolve (keep modular).
+                # Files that carry semantic config are always logical. For every
+                # other file, neither claim is assumed from the filename — both
+                # are VERIFIED by content: format-only normalizes both sides with
+                # ruff and compares them; ci-base-subset proves ci-base's changed
+                # lines are already covered by modular's changed lines relative to
+                # the merge base (see conflict_is_format_only / conflict_ci_base_is_subset).
+                local logical_conflicts=() format_only=() resolve_side=()
                 while IFS= read -r file; do
                     case "$file" in
                         pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
@@ -1085,6 +1177,10 @@ sync_modular_branch() {
                         *)
                             if conflict_is_format_only "$file"; then
                                 format_only+=("$file")
+                                resolve_side+=("theirs")
+                            elif conflict_ci_base_is_subset "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("ours")
                             else
                                 logical_conflicts+=("$file")
                             fi ;;
@@ -1098,16 +1194,24 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                for f in "${format_only[@]}"; do
-                    git checkout --theirs "$f" 2>/dev/null
+                local format_only_count=0 subset_count=0
+                for i in "${!format_only[@]}"; do
+                    f="${format_only[$i]}"
+                    if [ "${resolve_side[$i]}" = "ours" ]; then
+                        git checkout --ours "$f" 2>/dev/null
+                        subset_count=$((subset_count + 1))
+                    else
+                        git checkout --theirs "$f" 2>/dev/null
+                        format_only_count=$((format_only_count + 1))
+                    fi
                     git add "$f"
                 done
                 git commit --no-verify --no-edit >& /dev/null || {
-                    log_error "Failed to commit format-only conflict resolution for $base_branch merge"
+                    log_error "Failed to commit auto-resolved conflicts for $base_branch merge"
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch (${#format_only[@]} format-only conflicts resolved)"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular))"
             fi
         fi
     else
