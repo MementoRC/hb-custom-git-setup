@@ -2001,6 +2001,49 @@ sync_branch() {
         if [ "$REBUILD_MODE" = "true" ]; then
             log_operation "Merge conflict — trying format-aware merge"
             merge_log2="$(mktemp)"
+
+            # -----------------------------------------------------------
+            # XTHEIRS-OVERWRITE probe (observability only).
+            # -X theirs makes $ref win every conflicting hunk, which can
+            # silently discard $target-side content (e.g. fresh upstream
+            # content merged in from development). This block only LOGS
+            # which files would lose ours-side content — it does NOT
+            # touch the worktree/index and does NOT influence the merge
+            # below in any way. Any failure here is swallowed so the
+            # real merge is never affected.
+            # -----------------------------------------------------------
+            {
+                local xt_merge_base xt_ours_changed xt_theirs_changed
+                local xt_common xt_conflicts xt_count xt_shown xt_f xt_m
+                xt_merge_base="$(git merge-base "$target" "$ref" 2>/dev/null)"
+                if [ -n "$xt_merge_base" ]; then
+                    xt_ours_changed="$(git diff --name-only "$xt_merge_base" "$target" 2>/dev/null | sort -u)"
+                    xt_theirs_changed="$(git diff --name-only "$xt_merge_base" "$ref" 2>/dev/null | sort -u)"
+                    xt_common="$(comm -12 <(echo "$xt_ours_changed") <(echo "$xt_theirs_changed") 2>/dev/null)"
+                    xt_conflicts=()
+                    while IFS= read -r xt_f; do
+                        [ -z "$xt_f" ] && continue
+                        if ! git diff --quiet "$target" "$ref" -- "$xt_f" 2>/dev/null; then
+                            xt_conflicts+=("$xt_f")
+                        fi
+                    done <<< "$xt_common"
+                    xt_count="${#xt_conflicts[@]}"
+                    if [ "$xt_count" -gt 0 ]; then
+                        log_operation "$(colorize "$YELLOW" "XTHEIRS-OVERWRITE -X theirs fallback on $branch -> $target: $xt_count file(s) will take the branch's side")"
+                        xt_shown=0
+                        for xt_f in "${xt_conflicts[@]}"; do
+                            if [ "$xt_shown" -ge 20 ]; then
+                                log_detail "  ... ($xt_count total)"
+                                break
+                            fi
+                            xt_m="$(comm -23 <(git show "$target:$xt_f" 2>/dev/null | sort -u) <(git show "$ref:$xt_f" 2>/dev/null | sort -u) 2>/dev/null | wc -l)"
+                            log_detail "  $xt_f (ours -${xt_m} lines not in theirs)"
+                            xt_shown=$((xt_shown + 1))
+                        done
+                    fi
+                fi
+            } 2>/dev/null
+
             if git -c commit.gpgsign=false merge -X theirs --no-verify --no-ff "$ref" -m "Auto-merge $branch into $target" > "$merge_log2" 2>&1; then
                 # Merge succeeded with -X theirs — now reformat
                 local ruff_cmd=""
