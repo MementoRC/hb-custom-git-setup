@@ -1368,6 +1368,20 @@ merge_for_modular_branches() {
             merge_base="$(git merge-base "$modular_branch" "$ref" 2>/dev/null)"
             for f in "${format_only[@]}"; do
                 if [ -n "$merge_base" ] && ! git diff --quiet "$merge_base" "$ref" -- "$f" 2>/dev/null; then
+                    # BRANCH-OVERWRITE probe (observability only): log how many lines of
+                    # $modular_branch's side are silently discarded when the branch wins on
+                    # this conflict. Never allowed to affect the merge — all errors are
+                    # swallowed and nothing here touches the worktree/index.
+                    {
+                        local bo_ours bo_theirs bo_discard_count
+                        bo_ours="$(git show ":2:$f" 2>/dev/null | sort -u)"
+                        bo_theirs="$(git show ":3:$f" 2>/dev/null | sort -u)"
+                        bo_discard_count="$(comm -23 <(echo "$bo_ours") <(echo "$bo_theirs") 2>/dev/null | grep -c . 2>/dev/null)"
+                        bo_discard_count="${bo_discard_count:-0}"
+                        if [ "$bo_discard_count" -gt 0 ] 2>/dev/null; then
+                            log_detail "  BRANCH-OVERWRITE $f: branch $branch wins, discarding $bo_discard_count line(s) present in $modular_branch"
+                        fi
+                    } 2>/dev/null
                     # File is part of $ref's own intentional diff vs its merge-base — branch wins.
                     git checkout --theirs "$f" 2>/dev/null
                 else
@@ -1600,6 +1614,20 @@ merge_for_ci_branches() {
             merge_base="$(git merge-base "$base_branch" "$ref" 2>/dev/null)"
             for f in "${format_only[@]}"; do
                 if [ -n "$merge_base" ] && ! git diff --quiet "$merge_base" "$ref" -- "$f" 2>/dev/null; then
+                    # BRANCH-OVERWRITE probe (observability only): log how many lines of
+                    # $base_branch's side are silently discarded when the branch wins on
+                    # this conflict. Never allowed to affect the merge — all errors are
+                    # swallowed and nothing here touches the worktree/index.
+                    {
+                        local bo_ours bo_theirs bo_discard_count
+                        bo_ours="$(git show ":2:$f" 2>/dev/null | sort -u)"
+                        bo_theirs="$(git show ":3:$f" 2>/dev/null | sort -u)"
+                        bo_discard_count="$(comm -23 <(echo "$bo_ours") <(echo "$bo_theirs") 2>/dev/null | grep -c . 2>/dev/null)"
+                        bo_discard_count="${bo_discard_count:-0}"
+                        if [ "$bo_discard_count" -gt 0 ] 2>/dev/null; then
+                            log_detail "  BRANCH-OVERWRITE $f: branch $branch wins, discarding $bo_discard_count line(s) present in $base_branch"
+                        fi
+                    } 2>/dev/null
                     # File is part of $ref's own intentional diff vs its merge-base — branch wins.
                     git checkout --theirs "$f" 2>/dev/null
                 else
