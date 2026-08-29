@@ -604,9 +604,18 @@ pin_aiomqtt_transport() {
     if git diff --cached --quiet; then
         echo "[pin-aiomqtt] transport already matches upstream aiomqtt (tier: ${tier}); no pin commit needed"
     else
-        git commit -S --no-verify -m "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" \
-            -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin."
-        echo "[pin-aiomqtt] committed aiomqtt transport pin (tier: ${tier})"
+        # The success message MUST be gated on the commit's exit status. A bare
+        # `git commit` followed by an unconditional echo silently lies when the
+        # commit fails (observed 2026-08-27: `fatal: Unable to create index.lock`
+        # from a concurrent git process, yet the log claimed the bleeding-edge pin
+        # was committed — it was not, and the tier shipped without the pin).
+        if git commit -S --no-verify -m "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" \
+            -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin."; then
+            echo "[pin-aiomqtt] committed aiomqtt transport pin (tier: ${tier})"
+        else
+            echo "[pin-aiomqtt] ERROR: transport pin commit FAILED (tier: ${tier}) — this tier does NOT carry the aiomqtt pin"
+            return 1
+        fi
     fi
 }
 
