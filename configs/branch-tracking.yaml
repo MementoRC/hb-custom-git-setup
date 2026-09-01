@@ -139,12 +139,15 @@ target_branches:
 
       # _for_ci/ruff-external-mock: RETIRED 2026-07-05 — external=["mock"] fix moved to rebuild-script post-processing; local deleted (no origin ref), entry purged
 
-      # NOTE 2026-08-26: re-enabled after a disable experiment regressed ci-base.
-      # Payload is "# noqa: mock" across 9 test files.
-      - name: _for_ci/wallet-key-noqa-missing
+      # NOTE 2026-08-31: supersedes _for_ci/wallet-key-noqa-missing, which was cut off
+      # ci-base and carried 36 commits of ci-base ancestry (the ci-base-seed-v1 commit
+      # and a 1058-file ruff sweep). That absorbed content made it the owner of ~59
+      # files, so it won every conflict regardless of age and reverted live upstream
+      # content -- breaking ci-base test collection. Rebuilt from origin/development.
+      - name: _for_ci/wallet-key-noqa-rederived
         enabled: true
         tier: infrastructure
-        description: "Add # noqa: mock to 13 missing hex-string lines across 9 test files (vertex, hyperliquid, injective_v2, derive, bitmart). detect-wallet-private-key pre-commit hook flags mock blockchain hex strings; these files are touched by the py312 transform making them changed vs development and triggering the gate. Commit a2cb992f, GPG-signed. Added 2026-06-24."
+        description: "Re-derived replacement for _for_ci/wallet-key-noqa-missing (retired 2026-08-31). Cut fresh from origin/development, 16 files, touching NEITHER gateway_http_client.py NOR gateway_utils.py so those paths fall to the keep-ours arm and ci-base retains development's content. Carries: removal of 4 orphaned '# noqa: mock' lines (the other 8 of 9 guards were adopted upstream), StrEnum migration (architect_perpetual), E741 rename (coinbase_advanced_trade), lazy SignerClient import (lighter_perpetual), markets setter (hummingbot_application), py312 asyncio fixes (xrpl pipeline + lighter candles tests), 5 network-test skips (client command tests), cross-exchange-mm event-loop drain, okx duplicate tgtCcy key (F601). Omits the MQTT teardown fix (target construct gone post-aiomqtt), all vertex changes (connector removed from development), and pyproject external=[mock] (belongs to the ci-base layer). Commit d2cf8494, GPG-signed. Added 2026-08-31."
         permanent: false
         disable_when_in_development: true
 
@@ -162,10 +165,21 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/fix-kucoin-timestamp-utc
+      # NOTE 2026-09-01: supersedes _for_ci/fix-kucoin-timestamp-utc, which was a
+      # 2026-06-25 ci-base SNAPSHOT (Auto-merge commits of other _for_ci branches,
+      # the py312 transform pass, pixi.lock) carrying one real commit on top. That
+      # ci-base ancestry made it the owner of every file ci-base touches, so it won
+      # 65 conflicts with 2-month-stale content -- discarding 426 live upstream lines
+      # from gateway_http_client.py and 57 from gateway_utils.py, which removed
+      # _body/_query and is_slippage_failure and aborted ci-base test collection.
+      # The retired entry called a rebase onto development "impossible" because
+      # pd.Timestamp.UTC exists only on ci-base. The way out is to re-derive the
+      # INTENT, not the diff: utcfromtimestamp is deprecated upstream too, so fixing
+      # THAT is a real delta vs development and reaches the same end state.
+      - name: _for_ci/fix-kucoin-timestamp-utc-rederived
         enabled: true
         tier: infrastructure
-        description: "Fix 4 kucoin_perpetual funding-info tests broken by pd.Timestamp.UTC removal in pandas 3.x. The py312 post-merge transform pass (bba63d7a1) converted utcfromtimestamp() to fromtimestamp(tz=pd.Timestamp.UTC); pd.Timestamp.UTC does not exist in pandas 3.x. Adds 'from datetime import timezone' + replaces tz=pd.Timestamp.UTC with tz=timezone.utc (3 sites). NOTE: branch has ci-base ancestry (rebase onto development impossible because bug is introduced by the ci-base transform itself). Added 2026-06-25."
+        description: "Re-derived replacement for _for_ci/fix-kucoin-timestamp-utc (retired 2026-09-01). Cut fresh from origin/development, ONE file (test/hummingbot/connector/derivative/kucoin_perpetual/test_kucoin_perpetual_derivative.py), so it owns no other path and every unrelated conflict falls to the keep-ours arm -- in particular gateway_http_client.py and gateway_utils.py now retain development's content. Replaces deprecated pd.Timestamp.utcfromtimestamp(X) with pd.Timestamp.fromtimestamp(X, tz=timezone.utc) in the 3 funding-info properties, plus 'from datetime import timezone'. utcfromtimestamp is removed in pandas 3.x so this is correct upstream too, which promotes the branch from Class S (seed fallout, never retireable) to Class T (upstream-lag, auto-retires). Commit a7e22f10, GPG-signed. Added 2026-09-01."
         permanent: false
         disable_when_in_development: true
 

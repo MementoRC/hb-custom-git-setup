@@ -14,6 +14,23 @@
 SCRIPT_DIR="$(dirname "$0")"
 source "$SCRIPT_DIR/common.sh"
 
+# Writes the manual-rebuild summary at process exit, so it reflects the REAL
+# outcome including the pre-push CI gate. Registered as an EXIT trap by main()
+# when REBUILD_MODE is true. Historically the summary was written inline BEFORE
+# the gate ran, with a hardcoded exit 0 / tracking "success" — which reported
+# "Overall: CLEAN" even on runs where the gate failed and nothing was pushed
+# (e.g. 2026-08-31 10:28, a CLEAN summary over a ci-base collection abort).
+# Using $? here also covers the early `exit 1` paths (e.g. pixi not found).
+_finish_manual_rebuild_summary() {
+    local _rc=$?
+    [ "${REBUILD_MODE:-false}" = true ] || return 0
+    [ -n "${MANUAL_REBUILD_SUMMARY:-}" ] || return 0
+    local _tracking="success"
+    [ "$_rc" -ne 0 ] && _tracking="failed"
+    write_run_summary "$MANUAL_REBUILD_SUMMARY" "$_rc" "n/a" "$_tracking" "n/a" "(stdout)"
+    return 0
+}
+
 TEMP_DIR="${SCRIPT_DIR}/.tmp"
 TEMP_LOG="${TEMP_DIR}/test_output.log"
 
@@ -1063,8 +1080,9 @@ conflict_is_format_only() {
 # here would silently discard real ci-base content, which is worse than a
 # false "logical conflict" that just forces manual resolution.
 ###############################################################################
-conflict_ci_base_is_subset() {
+conflict_side_is_subset() {
     local file="$1"
+    local subset_side="$2"
     local ruff_cmd rc=1
     local base ours theirs diff_base_theirs diff_base_ours
 
@@ -1114,18 +1132,32 @@ conflict_ci_base_is_subset() {
             added_ours=$(grep -E '^\+' "$diff_base_ours" | grep -v '^+++ ' | sed 's/^\+//')
             removed_ours=$(grep -E '^-' "$diff_base_ours" | grep -v '^--- ' | sed 's/^-//')
 
-            # If ci-base has no changes at all relative to the base, it
+            # Select which side is the candidate SUBSET and which is the
+            # candidate SUPERSET. subset_side=theirs asks "is ci-base's change
+            # set covered by modular's?" (=> safe to keep ours/modular).
+            # subset_side=ours asks the mirror question (=> safe to keep
+            # theirs/ci-base).
+            local added_sub removed_sub added_sup removed_sup
+            if [ "$subset_side" = "theirs" ]; then
+                added_sub="$added_theirs";  removed_sub="$removed_theirs"
+                added_sup="$added_ours";    removed_sup="$removed_ours"
+            else
+                added_sub="$added_ours";    removed_sub="$removed_ours"
+                added_sup="$added_theirs";  removed_sup="$removed_theirs"
+            fi
+
+            # If the subset side has no changes at all relative to the base, it
             # contributed nothing and the subset check trivially holds.
             local subset=1
-            if [ -n "$added_theirs" ]; then
+            if [ -n "$added_sub" ]; then
                 while IFS= read -r line; do
-                    grep -qxF "$line" <<< "$added_ours" || { subset=0; break; }
-                done <<< "$added_theirs"
+                    grep -qxF "$line" <<< "$added_sup" || { subset=0; break; }
+                done <<< "$added_sub"
             fi
-            if [ "$subset" -eq 1 ] && [ -n "$removed_theirs" ]; then
+            if [ "$subset" -eq 1 ] && [ -n "$removed_sub" ]; then
                 while IFS= read -r line; do
-                    grep -qxF "$line" <<< "$removed_ours" || { subset=0; break; }
-                done <<< "$removed_theirs"
+                    grep -qxF "$line" <<< "$removed_sup" || { subset=0; break; }
+                done <<< "$removed_sub"
             fi
             [ "$subset" -eq 1 ] && rc=0
         fi
@@ -1133,6 +1165,70 @@ conflict_ci_base_is_subset() {
 
     rm -f "$base" "$ours" "$theirs" "$diff_base_theirs" "$diff_base_ours"
     return $rc
+}
+
+# Is ci-base's (theirs, stage :3) change set a subset of modular's (ours,
+# stage :2)?  True => ci-base contributes nothing unique => safe to KEEP OURS.
+conflict_ci_base_is_subset() {
+    conflict_side_is_subset "$1" "theirs"
+}
+
+# Mirror of the above: is modular's (ours) change set a subset of ci-base's
+# (theirs)?  True => modular contributes nothing unique => safe to KEEP THEIRS
+# (ci-base).  Without this direction, a file where modular carries only the
+# tier's own py312/ruff transform while ci-base carries that same transform
+# PLUS genuine new upstream logic is misreported as a logical conflict and
+# hard-aborts the rebuild.  Confirmed case 2026-08-29: lp_executor/data_types.py
+# and executors/validation.py, merge-base d5c2ca758d.
+conflict_modular_is_subset() {
+    conflict_side_is_subset "$1" "ours"
+}
+
+###############################################################################
+# Would taking the branch's side of this conflict revert content that
+# origin/development CURRENTLY has?
+#
+# Returns 0 (true) when at least one line present in $ours_spec but absent from
+# $theirs_spec is still present on origin/development — i.e. resolving with
+# --theirs would drop live upstream content. Sets UPSTREAM_LOSS_COUNT to how
+# many such lines.
+#
+# Deliberately NOT a subset test. An earlier version asked "is the branch a
+# strict subset of origin/development?" and was falsified by measurement on
+# 2026-08-30: it never fired, because _for_ci branches absorb ci-base's
+# ruff-formatted and py312-transformed text (wallet-key-noqa-missing carried 208
+# such lines on gateway_http_client.py alone), so the branch ALWAYS appears to
+# hold unique content and the conservative valve fired universally. Asking only
+# about the DISCARDED lines is immune to whatever extra text the branch carries.
+#
+# Returns 1 (false) when origin/development has no copy of the file, when
+# nothing would be discarded, or on any error.
+#
+# $ours_spec / $theirs_spec are git rev-parse-able blob specs. Production passes
+# the conflict stages (":2:$file" / ":3:$file"); the verification harness passes
+# real refs so it can exercise this exact function outside a merge.
+###############################################################################
+branch_reverts_upstream_content() {
+    local file="$1" ours_spec="$2" theirs_spec="$3"
+    local dev_blob ours theirs discarded
+
+    UPSTREAM_LOSS_COUNT=0
+
+    git rev-parse --verify --quiet "origin/development:$file" >/dev/null 2>&1 || return 1
+    dev_blob="$(git show "origin/development:$file" 2>/dev/null | sort -u)" || return 1
+    [ -z "$dev_blob" ] && return 1
+
+    ours="$(git show "$ours_spec" 2>/dev/null | sort -u)"
+    theirs="$(git show "$theirs_spec" 2>/dev/null | sort -u)"
+    [ -z "$ours" ] && return 1
+
+    discarded="$(comm -23 <(echo "$ours") <(echo "$theirs") 2>/dev/null)"
+    [ -z "$discarded" ] && return 1
+
+    UPSTREAM_LOSS_COUNT="$(comm -12 <(echo "$discarded") <(echo "$dev_blob") 2>/dev/null | grep -c . 2>/dev/null)"
+    UPSTREAM_LOSS_COUNT="${UPSTREAM_LOSS_COUNT:-0}"
+
+    [ "$UPSTREAM_LOSS_COUNT" -gt 0 ] 2>/dev/null
 }
 
 sync_modular_branch() {
@@ -1190,6 +1286,9 @@ sync_modular_branch() {
                             elif conflict_ci_base_is_subset "$file"; then
                                 format_only+=("$file")
                                 resolve_side+=("ours")
+                            elif conflict_modular_is_subset "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("theirs_subset")
                             else
                                 logical_conflicts+=("$file")
                             fi ;;
@@ -1203,12 +1302,15 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                local format_only_count=0 subset_count=0
+                local format_only_count=0 subset_count=0 modular_subset_count=0
                 for i in "${!format_only[@]}"; do
                     f="${format_only[$i]}"
                     if [ "${resolve_side[$i]}" = "ours" ]; then
                         git checkout --ours "$f" 2>/dev/null
                         subset_count=$((subset_count + 1))
+                    elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
+                        git checkout --theirs "$f" 2>/dev/null
+                        modular_subset_count=$((modular_subset_count + 1))
                     else
                         git checkout --theirs "$f" 2>/dev/null
                         format_only_count=$((format_only_count + 1))
@@ -1220,7 +1322,7 @@ sync_modular_branch() {
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular))"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base))"
             fi
         fi
     else
@@ -1619,26 +1721,69 @@ merge_for_ci_branches() {
                 return 1
             fi
 
-            local merge_base
+            local merge_base upstream_revert_count=0
             merge_base="$(git merge-base "$base_branch" "$ref" 2>/dev/null)"
             for f in "${format_only[@]}"; do
                 if [ -n "$merge_base" ] && ! git diff --quiet "$merge_base" "$ref" -- "$f" 2>/dev/null; then
-                    # BRANCH-OVERWRITE probe (observability only): log how many lines of
-                    # $base_branch's side are silently discarded when the branch wins on
-                    # this conflict. Never allowed to affect the merge — all errors are
-                    # swallowed and nothing here touches the worktree/index.
-                    {
-                        local bo_ours bo_theirs bo_discard_count
-                        bo_ours="$(git show ":2:$f" 2>/dev/null | sort -u)"
-                        bo_theirs="$(git show ":3:$f" 2>/dev/null | sort -u)"
-                        bo_discard_count="$(comm -23 <(echo "$bo_ours") <(echo "$bo_theirs") 2>/dev/null | grep -c . 2>/dev/null)"
-                        bo_discard_count="${bo_discard_count:-0}"
-                        if [ "$bo_discard_count" -gt 0 ] 2>/dev/null; then
-                            log_detail "  BRANCH-OVERWRITE $f: branch $branch wins, discarding $bo_discard_count line(s) present in $base_branch"
-                        fi
-                    } 2>/dev/null
-                    # File is part of $ref's own intentional diff vs its merge-base — branch wins.
-                    git checkout --theirs "$f" 2>/dev/null
+                    # File is part of $ref's own intentional diff vs its merge-base.
+                    #
+                    # Historically the branch won here unconditionally, with no notion of
+                    # staleness: a snapshot committed months ago still beat content that
+                    # development contributed moments earlier. That is the root cause of the
+                    # recurring ci-base staleness treadmill — the hyperliquid builder-fee
+                    # losses, the connect_command regression, and the 2026-08-29 gateway
+                    # collection abort (_body/_query, is_slippage_failure/next_slippage_pct)
+                    # where _for_ci/wallet-key-noqa-missing restored 2026-06-24 copies of
+                    # gateway_http_client.py and gateway_utils.py over current upstream.
+                    #
+                    # Measure what the branch would discard (this is the former
+                    # BRANCH-OVERWRITE probe, promoted from observability to decision), then
+                    # choose between three outcomes:
+                    #   (a) discards nothing            -> branch wins, as before
+                    #   (b) discards line(s) that origin/development STILL HAS
+                    #       -> the branch is reverting live upstream content; 3-way merge
+                    #          the branch's content with origin/development so BOTH the
+                    #          branch's own edits and upstream's newer lines survive.
+                    #          Wholesale re-derive was rejected here: it would delete
+                    #          ignore-rust-artifacts' 6 genuine .gitignore entries.
+                    #   (c) discards only line(s) origin/development no longer has
+                    #       -> not an upstream revert; branch wins, but say so loudly
+                    local bo_ours bo_theirs bo_discard_count
+                    bo_ours="$(git show ":2:$f" 2>/dev/null | sort -u)"
+                    bo_theirs="$(git show ":3:$f" 2>/dev/null | sort -u)"
+                    bo_discard_count="$(comm -23 <(echo "$bo_ours") <(echo "$bo_theirs") 2>/dev/null | grep -c . 2>/dev/null)"
+                    bo_discard_count="${bo_discard_count:-0}"
+
+                    if [ "$bo_discard_count" -eq 0 ] 2>/dev/null; then
+                        git checkout --theirs "$f" 2>/dev/null
+                    elif branch_reverts_upstream_content "$f" ":2:$f" ":3:$f"; then
+                        # DETECTION ONLY — the resolution below is unchanged from the
+                        # historical behaviour. Three automatic resolutions were designed
+                        # and measured on 2026-08-30; all three failed:
+                        #   subset test -> re-derive        INERT. The valve fired
+                        #       universally, because _for_ci branches absorb ci-base's
+                        #       formatting so the branch never looks like a pure subset.
+                        #   upstream-loss -> re-derive      HARMFUL. Correctly found
+                        #       378/53/7 lost upstream lines, but would have deleted
+                        #       _for_ci/ignore-rust-artifacts' 6 real .gitignore entries
+                        #       on every rebuild.
+                        #   upstream-loss -> 3-way merge    INERT. git merge-file
+                        #       conflicts on every known case (exit 16, 1, 1).
+                        # The branches involved are BOTH months stale AND independently
+                        # reformatted, so their text diverges from origin/development on
+                        # the same lines upstream changed — no automatic rule can
+                        # reconcile that. The durable fix belongs at the branch-authoring
+                        # layer: keep _for_ci/* narrow (the <5-file orthogonality rule)
+                        # and never commit a format sweep onto one, since the sweep makes
+                        # the branch the owner of every file it touches and therefore the
+                        # winner of this conflict regardless of age.
+                        git checkout --theirs "$f" 2>/dev/null
+                        upstream_revert_count=$((upstream_revert_count + 1))
+                        log_detail "  UPSTREAM-REVERT $f: branch $branch wins and discards $UPSTREAM_LOSS_COUNT line(s) that origin/development still has — branch content is stale for this file"
+                    else
+                        git checkout --theirs "$f" 2>/dev/null
+                        log_detail "  BRANCH-OVERWRITE $f: branch $branch wins, discarding $bo_discard_count line(s) present in $base_branch (none of them still live on origin/development — not an upstream revert)"
+                    fi
                 else
                     # Not in $ref's own diff vs its merge-base — an incidental conflict from
                     # stale ancestry (e.g. a Class-S seed-fallout branch), not an intentional
@@ -1662,7 +1807,7 @@ merge_for_ci_branches() {
             else
                 if git commit --no-verify --no-edit >& /dev/null; then
                     rm -f "$merge_log"
-                    log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved)"
+                    log_result true "$branch merged (${#format_only[@]} format-only conflicts resolved, $upstream_revert_count file(s) reverting live upstream content)"
                 else
                     log_error "Failed to commit format-only conflict resolution for $branch"
                     log_merge_failure "$merge_log" "$conflict_files"
@@ -2642,9 +2787,13 @@ main() {
   log_step "Branch tracking completed successfully!"
 
   if [ "$REBUILD_MODE" = true ]; then
-      local MANUAL_REBUILD_SUMMARY="${LOG_PATH}/manual_rebuild_latest.txt"
-      write_run_summary "$MANUAL_REBUILD_SUMMARY" 0 "n/a" "success" "n/a" "(stdout)"
-      log_step "Wrote manual rebuild summary to $MANUAL_REBUILD_SUMMARY"
+      # NOTE: deliberately NOT written here. The pre-push CI gate below can still
+      # fail (and on failure nothing is pushed), so writing the summary at this
+      # point can only ever report success. MANUAL_REBUILD_SUMMARY is global on
+      # purpose so the EXIT trap can see it; the trap writes the real outcome.
+      MANUAL_REBUILD_SUMMARY="${LOG_PATH}/manual_rebuild_latest.txt"
+      trap _finish_manual_rebuild_summary EXIT
+      log_step "Manual rebuild summary deferred to exit: $MANUAL_REBUILD_SUMMARY"
   fi
 
   # ----------------------------------------------------------------------------
