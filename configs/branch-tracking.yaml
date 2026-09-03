@@ -190,10 +190,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/fix-config-display-filter
+      - name: _for_ci/fix-config-display-filter-rederived
         enabled: true
         tier: infrastructure
-        description: "Fix test_list_configs gate failure: (1) remove kill_switch_rate/ethereum_chain_name/extra_tokens from client_configs_to_display (extra_tokens matched CoinbaseAdvancedTradeRateSourceMode.extra_tokens when local conf has that rate oracle, inflating the config table); (2) pin GateIoRateSourceMode() in test setUp so test is not sensitive to local conf_client.yml rate_oracle_source value. Commit 6c2efb9c, GPG-signed. Added 2026-06-27."
+        description: "Re-derived replacement for _for_ci/fix-config-display-filter (retired 2026-09-03). Cut fresh from origin/development so it carries no ci-base ancestry -- the old branch was a 2026-06-26 ci-base snapshot whose 2-file payload dragged ~55 stale upstream reverts behind it and aborted the rebuild during ci-base sync with 20 conflicts, including modify/delete on gateway_*_command.py files that no longer exist on development. Keeps only the payload: client_configs_to_display in config_command.py drops the three duplicate child attrs (kill_switch_rate, ethereum_chain_name, extra_tokens) and adopts the render order that test_list_configs asserts via full-table assertEqual -- the reordering is load-bearing, not cosmetic. Also pins rate_oracle_source to GateIoRateSourceMode() in test_list_configs so it does not depend on a local conf_client.yml. Both changes are correct upstream (development's source list is currently out of sync with its own test), so this is Class T and auto-retires. Commit c6da894d, GPG-signed, py_compile verified. Added 2026-09-03."
         permanent: false
         disable_when_in_development: true
 
