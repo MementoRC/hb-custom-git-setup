@@ -183,10 +183,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/fix-pd-timestamp-utc
+      - name: _for_ci/fix-pd-timestamp-utc-rederived
         enabled: true
         tier: infrastructure
-        description: "Fix pd.Timestamp.UTC (removed in pandas 3.x) in 7 files baked into ci-base seed from old py312-runtime mass transform: 4 derivative tests (hyperliquid, derive, gate_io, okx), test/mock/mock_api_order_book_data_source, hummingbot/connector/markets_recorder, hummingbot/model/db_migration/migrator. Replaces tz=pd.Timestamp.UTC with tz=timezone.utc + adds 'from datetime import timezone' (14 occurrences). Branch has ci-base ancestry — rebase not possible (same as fix-kucoin-timestamp-utc). Added 2026-06-26."
+        description: "Re-derived replacement for _for_ci/fix-pd-timestamp-utc (retired 2026-09-02). Cut fresh from origin/development so it carries no ci-base ancestry -- the old branch was a 2026-06-26 ci-base snapshot that owned every path ci-base touches, so its merge reverted live upstream content in 69 files, discarding 434 lines in gateway_http_client.py and 57 in gateway_utils.py, which removed _body/is_slippage_failure and aborted ci-base test collection. Replaces deprecated pd.Timestamp.utcfromtimestamp(X) with pd.Timestamp.fromtimestamp(X, tz=timezone.utc) (11 sites across derive/gate_io/hyperliquid/okx perpetual tests) and pd.Timestamp.utcnow() with pd.Timestamp.now(tz=timezone.utc) (3 sites in markets_recorder, db_migration/migrator, mock_api_order_book_data_source), plus 'from datetime import timezone' in each of the 7 files. Both helpers are removed in pandas 3.x so this is correct upstream too, promoting the branch from Class S (seed fallout, never retireable) to Class T (upstream-lag, auto-retires). Commit 3c70c32c, GPG-signed, py_compile verified. Added 2026-09-02."
         permanent: false
         disable_when_in_development: true
 
