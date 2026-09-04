@@ -197,13 +197,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/fix-backpack-balance-staked-lend
-        enabled: true
-        tier: infrastructure
-        description: "Fix 2 test gate failures in BackpackExchangeTests: _update_balances missing staked field in total (available+locked+staked) and not fetching BORROW_LEND_POSITIONS_PATH_URL for lend positions. Adds _get_net_lent_balances() helper (best-effort, asyncio.gather). Branch has ci-base ancestry — rebase not possible (fix is for functionality absent from ci-base seed; development has PR #8323's fix). Commit cbd0fb9e, GPG-signed. Added 2026-06-27."
-        permanent: false
-        disable_when_in_development: true
-
       # _for_ci/fix-login-prompt-retries: RETIRED 2026-07-05 — superseded by fix-login-prompt-retries-v2; local+origin deleted, entry purged
 
       - name: _for_ci/fix-backpack-perpetual-margin
