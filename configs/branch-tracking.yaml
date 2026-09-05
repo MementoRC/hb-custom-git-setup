@@ -206,6 +206,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-login-prompt-retries-rederived
+        enabled: false  # held 2026-09-05: pending resolution of entangled restore-stale-* snapshots
+        tier: infrastructure
+        description: "Re-derived replacement for _for_ci/fix-login-prompt-retries-v2 (disabled 2026-09-05). Cut fresh from origin/development so it carries no ci-base ancestry -- the old branch was based off ci-base and reverted live upstream content in 75 files. Fixes 2 test gate failures in LoginPromptTest: tests missing @patch for store_password_verification (real disk write) and legacy_confs_exist (real os.listdir). Both retry tests reach the success path where these unmocked I/O calls crash. Added @patch decorators + mock params to test_login_blank_password_error_retries and test_login_password_do_not_match_error_retries. Added 2026-09-05."
+        permanent: false
+        disable_when_in_development: true
+
       # DISABLED 2026-07-05: content fully absorbed into development + ci-base (0-file diff vs both).
       # disable_when_in_development never fired because the branch's ci-base ancestry makes its
       # diff-vs-development non-empty. Its format-only conflict resolution nets to a no-op, which

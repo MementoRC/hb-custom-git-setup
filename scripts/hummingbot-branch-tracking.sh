@@ -1681,7 +1681,7 @@ merge_for_ci_branches() {
             ref="origin/$branch"
         fi
 
-        git checkout "$base_branch" >& /dev/null || { log_error "Checkout $base_branch failed"; return 1; }
+        git checkout "$base_branch" > /tmp/hb_checkout_err.log 2>&1 || { log_error "Checkout $base_branch failed: $(head -c 400 /tmp/hb_checkout_err.log | tr '\n' ' ')"; return 1; }
 
         if git merge-base --is-ancestor "$ref" "$base_branch" 2>/dev/null; then
             log_operation "$branch already in $base_branch — skipping"
