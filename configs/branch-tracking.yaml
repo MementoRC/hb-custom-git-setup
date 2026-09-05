@@ -199,13 +199,6 @@ target_branches:
 
       # _for_ci/fix-login-prompt-retries: RETIRED 2026-07-05 — superseded by fix-login-prompt-retries-v2; local+origin deleted, entry purged
 
-      - name: _for_ci/fix-backpack-perpetual-margin
-        enabled: true
-        tier: infrastructure
-        description: "Fix test_in_flight_order_reserves_margin_not_full_notional: BackpackPerpetualDerivative was not overriding in_flight_asset_balances(), causing base class to reserve full notional instead of margin (notional/leverage) for BUY orders. Added 21-line override computing margin = amount*price/leverage for cross-margin USDC-settled perps. Commit 3149dac4, GPG-signed. Added 2026-06-27."
-        permanent: false
-        disable_when_in_development: true
-
       - name: _for_ci/fix-login-prompt-retries-v2
         enabled: true
         tier: infrastructure
