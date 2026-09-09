@@ -200,14 +200,14 @@ target_branches:
       # _for_ci/fix-login-prompt-retries: RETIRED 2026-07-05 — superseded by fix-login-prompt-retries-v2; local+origin deleted, entry purged
 
       - name: _for_ci/fix-login-prompt-retries-v2
-        enabled: true
+        enabled: false  # disabled 2026-09-05: stale ci-base snapshot; superseded by -rederived
         tier: infrastructure
         description: "Fix 2 test gate failures in LoginPromptTest (v2 correct fix): tests missing @patch for store_password_verification (real disk write) and legacy_confs_exist (real os.listdir). Both retry tests reach the success path where these unmocked I/O calls crash. Added @patch decorators + mock params to test_login_blank_password_error_retries and test_login_password_do_not_match_error_retries. Branch from ci-base (already has while-loop from v1). Commit 3fed7b4f, GPG-signed. Added 2026-06-27."
         permanent: false
         disable_when_in_development: true
 
       - name: _for_ci/fix-login-prompt-retries-rederived
-        enabled: false  # held 2026-09-05: pending resolution of entangled restore-stale-* snapshots
+        enabled: true
         tier: infrastructure
         description: "Re-derived replacement for _for_ci/fix-login-prompt-retries-v2 (disabled 2026-09-05). Cut fresh from origin/development so it carries no ci-base ancestry -- the old branch was based off ci-base and reverted live upstream content in 75 files. Fixes 2 test gate failures in LoginPromptTest: tests missing @patch for store_password_verification (real disk write) and legacy_confs_exist (real os.listdir). Both retry tests reach the success path where these unmocked I/O calls crash. Added @patch decorators + mock params to test_login_blank_password_error_retries and test_login_password_do_not_match_error_retries. Added 2026-09-05."
         permanent: false
@@ -231,14 +231,14 @@ target_branches:
       # It is NOT the cause of the missing builder-fee symbols - those are absent from
       # ci-base with this branch enabled OR disabled. Do not disable to chase builder-fee.
       - name: _for_ci/restore-stale-seed-connector-sources
-        enabled: true
+        enabled: false  # disabled 2026-09-05: stale snapshot reverted live gateway content; residue now handled by _for_ci/purge-seed-residue
         tier: infrastructure
         description: "Restore binance_perpetual_api_order_book_data_source.py + binance_perpetual_user_stream_data_source.py + bitget_perpetual_derivative.py to origin/development content. The frozen ci-base-seed-v1 py312 mass-transform drags stale copies of these SOURCE files through the rebuild merge while their TEST files track development, so current tests run against stale source and abort the ci-base test gate (rebuild 20260722_164432: 4 binance + 2 bitget failures). Both connectors internally consistent on development (not upstream-red). Re-creates the prematurely-retired _for_ci/fix-bitget-limit-maker-order-type. Class-S restore: branch has ci-base ancestry (a development-based fix is a merge no-op). Commit b8fdce85, GPG-signed. Added 2026-07-22. Also restores hyperliquid_auth.py + hyperliquid_perpetual_auth.py + hyperliquid_exchange.py + hyperliquid_perpetual_derivative.py to origin/development content — same Class-S signature (35 key-authority failures on rebuild 20260819_111808: AttributeError no attribute 'is_key_authorized' / '_verify_key_authority'). Restored content re-modernized to ci-base py312 annotation style (future-import, PEP 585/604) so the full-file restore merges clean. Commit 6a3ddb98, GPG-signed, separate from b8fdce85 so either half can be reverted independently. Added 2026-08-20. Superseded by a seed re-cut dropping the py312 mass-transform."
         permanent: false
         disable_when_in_development: true
 
       - name: _for_ci/restore-stale-grid-executor-test-fixtures
-        enabled: true
+        enabled: false  # disabled 2026-09-05: same stale snapshot as restore-stale-seed-connector-sources
         tier: infrastructure
         description: "Restore test/hummingbot/strategy_v2/executors/grid_executor/test_grid_executor.py to origin/development content. Development commit 67c711251a touched both hummingbot/strategy_v2/executors/grid_executor/data_types.py and this test file; the data_types.py hunk landed on ci-base (require_stop_price / require_market_order_type validators present and enforced) but the companion test-file hunk did not, leaving 5 grid_executor tests failing at pydantic config construction on the ci-base test gate (rebuild 20260819_111808: limit_price must be lower than start_price, stop_loss_order_type must be MARKET). The commit IS a reachable ancestor of ci-base (git merge-base --is-ancestor exit 0), so this is NOT merge-lag and will not self-heal on a later rebuild. DISTINCT MECHANISM from _for_ci/restore-stale-seed-connector-sources: that one is seed py312 mass-transform staleness, this is an asymmetric hunk loss whose cause is still unidentified — the pipeline conflict handler favours development (git checkout --theirs) and should have preserved it. Class-S restore: branch has ci-base ancestry (based off origin/ci-base; a development-based fix is a merge no-op). Commit 63b946d1, GPG-signed. Added 2026-08-20. Declares parent _for_ci/expand-ruff-coverage so it merges AFTER that branch: expand-ruff-coverage carries its own stale pre-67c711251a copy of this same test file, and the per-file merge resolution gives the branch the win, so without this ordering the restore is re-reverted on every rebuild."
         permanent: false
@@ -253,14 +253,14 @@ target_branches:
         disable_when_in_development: false
 
       - name: _for_ci/fix-foxbit-typing-imports
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Restore Dict/List/Optional to the typing import in foxbit_api_order_book_data_source.py; py312 seed/live-transform stripped them while leaving annotation usages -> 7x F821 failing the bleeding-edge ruff lint gate. Branch has ci-base ancestry (development still has the imports). Added 2026-06-30."
         permanent: false
         disable_when_in_development: true
 
       - name: _for_ci/fix-lighter-exchange-slippage-lazyload
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Restore lighter_exchange.py slippage (_effective_order_price applied to ALL market orders, not just NaN price), lazy market-load guard (_get_last_traded_price), and _account_ready_lock - py312 seed-transform fallout. SOURCE-ONLY: the 2 covering tests (slippage-to-passed-price, lazy-loads-markets) come from development via the dev-merge, they were NOT deleted by the transform. development is correct so branch has ci-base ancestry (rebase onto development impossible, same as fix-lighter-candles-exchange-data-init). Merge-simulated against ci-base 7ccf50693: clean merge, both tests pass. Commit da286726, GPG-signed. Added 2026-07-02."
         permanent: false
@@ -274,7 +274,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/import-linter
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "PROMOTED 2026-07-05 from _for_bleed/import-linter-adoption (was mis-tiered as a bleeding-edge feature). Replace tach with import-linter for sub-package boundary enforcement: .importlinter (13 contracts enforcing hb_compat/ across 14 sub-packages) + pyproject.toml import-linter dep + lint-boundaries pixi task. Pure tooling/framework, belongs on ci-base. Clean 2-file delta off ci-base; carries ci-base ancestry (pyproject change depends on ci-base pixi config), same class as fix-pd-timestamp-utc. Verified: lint-imports 13 kept/0 broken/332ms."
         permanent: false
@@ -288,21 +288,21 @@ target_branches:
         disable_when_in_development: false
 
       - name: _for_ci/augmented-docs
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "FOLDED 2026-07-05 from retired _for_bleed/augmented-pure-python, whose only unique content was this single doc (docs/development/augmented-pure-python.md, 155 lines); the skill + .gitignore it claimed already live on ci-base. Doc belongs on ci-base next to the skill. Commit 8c6237cb."
         permanent: false
         disable_when_in_development: false
 
       - name: _for_ci/quick-check-ignore-parity
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Apply full-ci pytest --ignore list (10 paths: mock, ndax, dydx_v4_perpetual, decibel_perpetual, decibel rate-source test, vertex, gateway, oms_connector, amm_arb, cross_exchange_market_making) to the diff-driven quick-check.yml, which previously ran pytest with NO ignores. Fixes quick-check ModuleNotFoundError (decibel/dydx_v4/vertex) when select_tests.py picks broadly after a ci-base merge. ci-base ancestry (quick-check.yml/workflow.yml are ci-base-only). Commit 12e3f460. Added 2026-07-05."
         permanent: false
         disable_when_in_development: false
 
       - name: _for_ci/fix-hyperliquid-rate-flaky
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Fix flaky test_get_hyperliquid_prices_handles_unknown_symbols: get_prices' module-level async_ttl_cache keyed on str((self,...)) suffers stale cache hits across test instances via Python heap-address reuse, returning a prior test's empty result. Adds get_prices.cache_clear() after each instantiation in the 5 async tests that lacked it (mirrors the one test that already had it). Fixes the 1/7403 intermittent failure that reddens kraken-new-order-types and others. ci-base ancestry. Commit 1d29ca4a. Added 2026-07-05."
         permanent: false
@@ -316,7 +316,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/snapshot-pr-modular-trigger
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Add `modular` to pull_request.branches in .github/workflows/workflow.yml + quick-check.yml so the auto-generated -pr snapshot PRs targeting modular (bleeding-edge-pr -> modular, PR #70) actually run full ci + quick-check. GitHub filters pull_request on base_ref; modular was the only missing base (ci-base/development already present). ci-base ancestry (workflow.yml/quick-check.yml are ci-base-only, same class as quick-check-ignore-parity). Added 2026-07-06."
         permanent: false
@@ -330,7 +330,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/ignore-decibel-candles-test
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Add test/hummingbot/data_feed/candles_feed/decibel_perpetual_candles/ to the --ignore lists in workflow.yml (Build+Test) and quick-check.yml. ci-base-pr Build+Test failed on test_decibel_perpetual_candles: the in-tree candles supersede-skip (test/conftest.py) needs the candles_feed sub-package which is only installed at the modular tier, so on ci-base the decibel candles test runs and fails (decibel is deliberately excluded/incomplete). Both files already ignore the decibel CONNECTOR paths; this closes the missed candles path. ci-base ancestry (workflow files are ci-base-only). Commit 71557424, GPG-signed. Added 2026-07-08."
         permanent: false
@@ -344,7 +344,7 @@ target_branches:
         disable_when_in_development: false
 
       - name: _for_ci/expand-ruff-coverage
-        enabled: true
+        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
         description: "Widen [tool.ruff] include in pyproject.toml to cover controllers/**/*.py, scripts/**/*.py, bin/**/*.py, bin/hbot, hummingbot/**/*.pyi (previously only hummingbot/**/*.py + test/**/*.py); add bin to the lint/format/format-check pixi task arg lists (bin was missing entirely). Root-caused the recurring pre-push quality gate failure: pixi run -e ci lint/format-check passed trivially because ruff's include-glob directory-walk silently found zero files under controllers/scripts/bin, while pre-commit's ruff hook (operating on explicit tracked file paths, which bypass include-glob filtering) caught real accumulated violations there -- NOT a ruff-version skew as first suspected (pre-commit rev v0.15.7 and pixi ci-env ruff==0.15.7 already matched exactly). One-time normalization of the 61 newly-covered files included in the same commit. Commit 7d65ec1d, GPG-signed. Verified: pre-commit run --all-files exits 0 with zero further changes; lint + format-check clean under widened scope. EXCEPTION per feedback_for_ci_rebase_viability.md: origin/development's pyproject.toml entirely lacks the [tool.pixi.*]/[tool.ruff]/[tool.mypy]/[tool.bandit]/[tool.coverage.*] sections this fix edits, so rebase --onto development is structurally impossible (not a resolvable conflict) -- branch is based on ci-base as-is, unlike the normal _for_ci recipe. SINGLE-USE: retire (delete local + delete origin + remove this entry) once the next --rebuild cycle absorbs/merges it into ci-base; do not let it persist across cycles. Added 2026-07-31."
         permanent: false
@@ -363,6 +363,13 @@ target_branches:
         description: "Teach ClientConfigAdapter._is_union to recognize PEP 604 unions. It tested `hasattr(t, '__origin__') and t.__origin__ == Union`, which only matches legacy `Union[A, B]`; a PEP 604 `A | B` has get_origin -> types.UnionType, so the check returned False and _get_printable_value emitted '' instead of the submodel title. Latent on development (the field is still written `Union[NestedModelTwo, NestedModelOne]` there); manifests on ci-base because the py312 transform rewrites that annotation to `NestedModelTwo | NestedModelOne` — the annotation rewriter outrunning the code that reads annotations. Failed test_list_configs_pydantic_model and test_traverse with \"'nested_mode_one' != ''\", the last 2 failures blocking the ci-base pre-push gate after the Union[tuple(...)] collection fix. Fix is `get_origin(t) in (Union, types.UnionType)` — a logic change inside a function body, so the transform will not rewrite it and it survives every rebuild. Verified in a ci-base worktree: 2 target tests pass, test/hummingbot/client/ 207 passed / 0 failed, format+lint clean. Branch based off origin/development, commit d5c2ca75, GPG-signed. Added 2026-08-21."
         permanent: false
         disable_when_in_development: true
+
+      - name: _for_ci/purge-seed-residue
+        enabled: true
+        tier: infrastructure
+        description: "Deletes ci-base seed residue that upstream has already removed: gateway_{lp,pool,swap,token} commands + lp_command_utils, and the ascend_ex/cube/vertex connectors along with their tests/rate-sources/candles. Rooted at the ci-base-seed-v1 tag so it cannot go stale. Every path verified absent from origin/development. 78 files, deletions only. Added 2026-09-05."
+        permanent: false
+        disable_when_in_development: false
 
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
@@ -398,49 +405,49 @@ target_branches:
       #    a future extraction effort declares a real dependency rather than re-vendoring the
       #    logic again.
       - name: _for_bleed/modular-wiring
-        enabled: true
+        enabled: false
         base: modular
         tier: infrastructure
         merge_order: 1
-        description: "Sub-package wiring layer: .gitmodules + 14 gitlinks, install-subpackages + compat tasks, ci/check_subpackage_compat.py, web_assistant/async_utils shims, sub-packages-compat CI job, remote_iface Phase-6 cutover (ce0721754)"
+        description: "Sub-package wiring layer: .gitmodules + 14 gitlinks, install-subpackages + compat tasks, ci/check_subpackage_compat.py, web_assistant/async_utils shims, sub-packages-compat CI job, remote_iface Phase-6 cutover (ce0721754). Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: false
 
       - name: _for_bleed/dedupe-hummingbot-logger-modular
-        enabled: true
+        enabled: false
         base: modular
         tier: feature
         merge_order: 2
-        description: "Re-tiered replacement for the ci-base-tier _for_bleed/dedupe-hummingbot-logger (that entry is structurally unfixable at ci-base — no sub-packages/ wiring there). Replaces hummingbot/logger/logger.py's duplicate HummingbotLogger with a real `from logger.logger import HummingbotLogger` re-export (fixes MementoRC/hb-logger#9), and wires the hb-logger callback API (register_notify_handler / register_network_handler) into HummingbotApplication.__init__ — the first real call site for MementoRC/hb-logger#1's Phase 0 callback-registration refactor, replacing the old HummingbotApplication.main_application() singleton lookup baked into modular's pre-refactor logger.py. Depends on the logger submodule provided by modular-wiring; merge_order 2 (after modular-wiring's 1)."
+        description: "Re-tiered replacement for the ci-base-tier _for_bleed/dedupe-hummingbot-logger (that entry is structurally unfixable at ci-base — no sub-packages/ wiring there). Replaces hummingbot/logger/logger.py's duplicate HummingbotLogger with a real `from logger.logger import HummingbotLogger` re-export (fixes MementoRC/hb-logger#9), and wires the hb-logger callback API (register_notify_handler / register_network_handler) into HummingbotApplication.__init__ — the first real call site for MementoRC/hb-logger#1's Phase 0 callback-registration refactor, replacing the old HummingbotApplication.main_application() singleton lookup baked into modular's pre-refactor logger.py. Depends on the logger submodule provided by modular-wiring; merge_order 2 (after modular-wiring's 1). Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
 
       - name: _for_bleed/user-stream-tracker
-        enabled: true
+        enabled: false
         base: modular
         tier: feature
         merge_order: 3
-        description: "Parent-side wiring for the hb-user-stream-tracker extraction (hb-user-stream-tracker#1, merged to development 2026-08-04). Adds the sub-packages/user-stream-tracker submodule (15th), install-subpackages + ci/check_subpackage_compat.py entries, and rewrites hummingbot/core/data_type/user_stream_tracker.py and user_stream_tracker_data_source.py as 3-line re-export shims (Recipe 1). Verified before replacing: each source file held only its single target class, and all 102 imports across 100 files reference only UserStreamTracker / UserStreamTrackerDataSource, so the 46 connector user-stream data source files need zero import changes. Based on modular (NOT ci-base) because install-subpackages and check_subpackage_compat.py exist only from the modular tier upward -- follows the dedupe-hummingbot-logger-modular precedent. NOTE: also edits .importlinter, which _for_ci/import-linter otherwise owns; the two touch different regions (this adds a root_packages entry plus a new top layer row; that branch adds ignore_imports inside two contract bodies)."
+        description: "Parent-side wiring for the hb-user-stream-tracker extraction (hb-user-stream-tracker#1, merged to development 2026-08-04). Adds the sub-packages/user-stream-tracker submodule (15th), install-subpackages + ci/check_subpackage_compat.py entries, and rewrites hummingbot/core/data_type/user_stream_tracker.py and user_stream_tracker_data_source.py as 3-line re-export shims (Recipe 1). Verified before replacing: each source file held only its single target class, and all 102 imports across 100 files reference only UserStreamTracker / UserStreamTrackerDataSource, so the 46 connector user-stream data source files need zero import changes. Based on modular (NOT ci-base) because install-subpackages and check_subpackage_compat.py exist only from the modular tier upward -- follows the dedupe-hummingbot-logger-modular precedent. NOTE: also edits .importlinter, which _for_ci/import-linter otherwise owns; the two touch different regions (this adds a root_packages entry plus a new top layer row; that branch adds ignore_imports inside two contract bodies). Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
         last_reviewed: "2026-08-05"
 
       - name: _for_bleed/exceptions-shim
-        enabled: true
+        enabled: false
         base: modular
         tier: feature
         merge_order: 4
-        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan. RE-TIERED 2026-08-05 from bleeding-edge.tracked_branches to modular: the bleeding-edge gate runs the full pytest suite BEFORE install-subpackages, so the shim import of data_type_primitives failed collection (exit=2) and the merge was reverted every run -- structurally unfixable at that tier, same reason dedupe-hummingbot-logger was re-tiered to dedupe-hummingbot-logger-modular. Branch is at 29cba381 (rebased --onto ci-base 2026-08-04 to shed an unintended logger.py change); merge_tree verified clean against modular, so no further rebase is needed for this move."
+        description: "Replace hummingbot/exceptions.py with a re-export shim from data-type-primitives (hb-data-type-primitives#10, commit 523118e1). Phase 1 Step 1 of the post-ADR-0001 extraction plan. RE-TIERED 2026-08-05 from bleeding-edge.tracked_branches to modular: the bleeding-edge gate runs the full pytest suite BEFORE install-subpackages, so the shim import of data_type_primitives failed collection (exit=2) and the merge was reverted every run -- structurally unfixable at that tier, same reason dedupe-hummingbot-logger was re-tiered to dedupe-hummingbot-logger-modular. Branch is at 29cba381 (rebased --onto ci-base 2026-08-04 to shed an unintended logger.py change); merge_tree verified clean against modular, so no further rebase is needed for this move. Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
         last_reviewed: "2026-08-05"
 
       - name: _for_bleed/common-data-types-shim
-        enabled: true
+        enabled: false
         base: modular
         tier: feature
         merge_order: 5
-        description: "Rewrite hummingbot/core/data_type/common.py as an explicit re-export of its 11 public names (OrderType, TradeType, PositionAction, PositionSide, PositionMode, PriceType, LPType, OpenOrder, GroupedSetDict, MarketDict, LazyDict) from the data-type-primitives sub-package. Phase 1 definition-site fix of the post-ADR-0001 extraction plan; commit 71366e9b, GPG-verified. Attacks the DEFINITION SITE rather than the ~387 importing files: the parent and sub-package copies had already converged member-for-member, so no value migration remained -- only a duplicate-class-object problem. Enum equality is identity-based, and TradeFeeBase branches on TradeType/PositionAction equality to pick a fee class, so the duplicate surfaced as a WRONG FEE with no exception. Re-export collapses this to one class object per type; every importing file keeps its import path unchanged. Explicit named imports (not a star import) so the sub-package's extra LimitOrderStatus does not silently widen the parent's public API. Based on modular (NOT ci-base) for the same reason as user-stream-tracker and exceptions-shim: ci-base carries no sub-packages/, no .gitmodules and no install-subpackages, so the import cannot resolve there -- and registering on bleeding-edge.tracked_branches would fail collection (exit=2) every run because that gate runs pytest BEFORE install-subpackages. Verified in-worktree: all 11 names assert identity against data_type_primitives; LazyDict PEP695 __parameters__ (KT, VT) intact; test_trade_fee.py + test_trade_fee_schema_loader.py + test_in_flight_order.py + test_limit_order.py = 43 passed 0 failed; test/hummingbot/core/data_type/ = 111 passed 29 skipped 0 failed; format and lint clean. Known change: OrderType.__module__ becomes data_type_primitives.common (internal isinstance stays valid, one class object; external qualname matchers would need updating -- exceptions.py already took this shift). Unblocks hb-trade-fee and hb-connector-data-types. DISABLED 2026-08-10: conflicts with _for_bleed/add-new-order-types (a6b1dad4e7 'feat(core): conditional OrderType enum + DelayedMarketOrder'), which adds OrderType members 7-12 and the is_delayed_market_type/is_conditional_type helpers to this same file. This shim deletes the enum body they extend, so the --rebuild hit 'Merge conflict - trying format-aware merge' and the auto-resolution produced a file with this docstring, their restored class bodies, and NO module imports at all - Quality gate FAILED on bleeding-edge, run 20260810_143855, and the pre-push gate correctly refused to push bleeding-edge/accelerated. ci-base and modular gated green and DID push, so the shim remains live and correct on modular. Durable fix pending: data_type_primitives already carries members 7-12 and all three helpers, so add-new-order-types' common.py hunk is redundant once this lands - drop that hunk (keeping its test_order_type_extensions.py) after auditing its two declared children kraken-new-order-types and position-exchange-executor for their own common.py edits. A parent: declaration alone does NOT fix this: both branches edit the same region incompatibly, so sequencing only changes which order the conflict occurs in. RE-ENABLED 2026-08-10 after fixing the conflict at its source: _for_bleed/add-new-order-types commit 695f5787 drops its now-redundant common.py hunk (keeping test_order_type_extensions.py), because data_type_primitives already carries members 7-12, the five-variant is_limit_type, and both is_delayed_market_type and is_conditional_type - verified character-for-character before removal. Note that disabling this entry was INEFFECTIVE as a mitigation and the second rebuild failed identically: modular accumulates merged content permanently and bleeding-edge is re-cut from the modular tip, so commit 71366e9b stayed in every build regardless of this flag. Merge sequence verified in a scratch worktree cut from origin/modular: merging the reworked add-new-order-types contributes only the 86-line test file with zero common.py change, after which kraken-new-order-types and position-exchange-executor BOTH merge clean. Pairwise merge-tree against a bare modular still shows those two conflicting, which is expected and misleading - they inherit the hunk and are only resolved by their parent landing first, guaranteed here by the parent chain add-new-order-types then kraken-new-order-types then position-exchange-executor."
+        description: "Rewrite hummingbot/core/data_type/common.py as an explicit re-export of its 11 public names (OrderType, TradeType, PositionAction, PositionSide, PositionMode, PriceType, LPType, OpenOrder, GroupedSetDict, MarketDict, LazyDict) from the data-type-primitives sub-package. Phase 1 definition-site fix of the post-ADR-0001 extraction plan; commit 71366e9b, GPG-verified. Attacks the DEFINITION SITE rather than the ~387 importing files: the parent and sub-package copies had already converged member-for-member, so no value migration remained -- only a duplicate-class-object problem. Enum equality is identity-based, and TradeFeeBase branches on TradeType/PositionAction equality to pick a fee class, so the duplicate surfaced as a WRONG FEE with no exception. Re-export collapses this to one class object per type; every importing file keeps its import path unchanged. Explicit named imports (not a star import) so the sub-package's extra LimitOrderStatus does not silently widen the parent's public API. Based on modular (NOT ci-base) for the same reason as user-stream-tracker and exceptions-shim: ci-base carries no sub-packages/, no .gitmodules and no install-subpackages, so the import cannot resolve there -- and registering on bleeding-edge.tracked_branches would fail collection (exit=2) every run because that gate runs pytest BEFORE install-subpackages. Verified in-worktree: all 11 names assert identity against data_type_primitives; LazyDict PEP695 __parameters__ (KT, VT) intact; test_trade_fee.py + test_trade_fee_schema_loader.py + test_in_flight_order.py + test_limit_order.py = 43 passed 0 failed; test/hummingbot/core/data_type/ = 111 passed 29 skipped 0 failed; format and lint clean. Known change: OrderType.__module__ becomes data_type_primitives.common (internal isinstance stays valid, one class object; external qualname matchers would need updating -- exceptions.py already took this shift). Unblocks hb-trade-fee and hb-connector-data-types. DISABLED 2026-08-10: conflicts with _for_bleed/add-new-order-types (a6b1dad4e7 'feat(core): conditional OrderType enum + DelayedMarketOrder'), which adds OrderType members 7-12 and the is_delayed_market_type/is_conditional_type helpers to this same file. This shim deletes the enum body they extend, so the --rebuild hit 'Merge conflict - trying format-aware merge' and the auto-resolution produced a file with this docstring, their restored class bodies, and NO module imports at all - Quality gate FAILED on bleeding-edge, run 20260810_143855, and the pre-push gate correctly refused to push bleeding-edge/accelerated. ci-base and modular gated green and DID push, so the shim remains live and correct on modular. Durable fix pending: data_type_primitives already carries members 7-12 and all three helpers, so add-new-order-types' common.py hunk is redundant once this lands - drop that hunk (keeping its test_order_type_extensions.py) after auditing its two declared children kraken-new-order-types and position-exchange-executor for their own common.py edits. A parent: declaration alone does NOT fix this: both branches edit the same region incompatibly, so sequencing only changes which order the conflict occurs in. RE-ENABLED 2026-08-10 after fixing the conflict at its source: _for_bleed/add-new-order-types commit 695f5787 drops its now-redundant common.py hunk (keeping test_order_type_extensions.py), because data_type_primitives already carries members 7-12, the five-variant is_limit_type, and both is_delayed_market_type and is_conditional_type - verified character-for-character before removal. Note that disabling this entry was INEFFECTIVE as a mitigation and the second rebuild failed identically: modular accumulates merged content permanently and bleeding-edge is re-cut from the modular tip, so commit 71366e9b stayed in every build regardless of this flag. Merge sequence verified in a scratch worktree cut from origin/modular: merging the reworked add-new-order-types contributes only the 86-line test file with zero common.py change, after which kraken-new-order-types and position-exchange-executor BOTH merge clean. Pairwise merge-tree against a bare modular still shows those two conflicting, which is expected and misleading - they inherit the hunk and are only resolved by their parent landing first, guaranteed here by the parent chain add-new-order-types then kraken-new-order-types then position-exchange-executor. Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
         last_reviewed: "2026-08-10"
@@ -450,11 +457,11 @@ target_branches:
       # is_delayed_market_type, is_conditional_type) via the common.py re-export shim.
       # Historical lineage: originally parented to _for_bleed/add-new-order-types (the conditional OrderType enum hub), which remains on the bleeding-edge tier.
       - name: _for_bleed/kraken-new-order-types
-        enabled: true
+        enabled: false
         base: modular
         parent: _for_bleed/common-data-types-shim  # repointed 2026-08-12: this branch's source needs the common.py re-export shim merged FIRST, since its ~21 OrderType.STOP_LOSS refs resolve only through it; the rebuild tests each branch as it merges, so this ordering is load-bearing. Former parent _for_bleed/add-new-order-types remains on the bleeding-edge tier and is therefore ordering-inert; that dependency is documented in the comment block above this entry.
         tier: feature
-        description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop)"
+        description: "Kraken connector conditional order routing (stop-loss, take-profit, trailing-stop). Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
 
@@ -463,14 +470,22 @@ target_branches:
       # is_delayed_market_type, is_conditional_type) via the common.py re-export shim.
       # _for_bleed/position-exchange-executor: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. RE-ENABLED 2026-06-18: same lost-promotion c83247374 (seed-v2 reseed); recovered via rebuild loop.
       - name: _for_bleed/position-exchange-executor
-        enabled: true  # re-enabled 2026-06-18 with hub add-new-order-types: same lost-promotion c83247374 (seed-v2 reseed); position_on_exchange_executor/ absent from ci-base — recovered via rebuild loop.
+        enabled: false  # re-enabled 2026-06-18 with hub add-new-order-types: same lost-promotion c83247374 (seed-v2 reseed); position_on_exchange_executor/ absent from ci-base — recovered via rebuild loop.
         base: modular
         tier: feature
-        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. 2026-07-05: merged add-executor-factory in (provides strategy_v2/executors/executor_factory.py) so standalone CI collects; diamond dep (needs both kraken-new-order-types parent AND add-executor-factory)."
+        description: "PositionOnExchangeExecutor for exchange-native stop-loss and take-profit orders. 2026-07-05: merged add-executor-factory in (provides strategy_v2/executors/executor_factory.py) so standalone CI collects; diamond dep (needs both kraken-new-order-types parent AND add-executor-factory). Superseded 2026-09-08 by _for_bleed/modular-regen, which consolidates this branch's content (verified 68/68 file overlap, byte-identical where this branch is not stale). Disabled rather than retired so it can be re-enabled if the consolidation regresses."
         permanent: false
         disable_when_in_development: true
         parent: _for_bleed/kraken-new-order-types
         last_reviewed: "2026-06-13"
+
+      - name: _for_bleed/modular-regen
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Regenerated modular delta on current ci-base (885cb1ac31): 57 MODULAR-OWN files verbatim + the 12 MIXED files hand-merged per hummingbot_ai_docs/modular-regeneration-classification-2026-09-06.md. Verified import-linter 17/0 and compat-check 3/3; test suites blocked by the pre-existing ci-base settings.py:80 py312 dynamic-Union defect."
+        permanent: false
+        disable_when_in_development: false
 
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
