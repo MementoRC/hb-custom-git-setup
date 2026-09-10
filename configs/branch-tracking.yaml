@@ -604,7 +604,7 @@ target_branches:
 
       # _for_bleed/add-new-order-types: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder. RE-ENABLED 2026-06-18: promotion c83247374 LOST in seed-v2 reseed; content recovered via rebuild loop.
       - name: _for_bleed/add-new-order-types
-        enabled: true  # re-enabled 2026-06-18: promotion c83247374 LOST in seed-v2 reseed; OrderType STOP_LOSS/TP/TS enum + delayed_market_order.py NOT in ci-base — recovered via rebuild loop. Hub for kraken-new-order-types + position-exchange-executor.
+        enabled: false  # DISABLED 2026-09-09: 1181-file stale whole-tree snapshot (merge-base fb44e9d7 dated 2026-07-05; last ci-base refresh 11cfada5c8 dated 2026-07-06). Its diff vs current ci-base spans hummingbot/cli/** AND hummingbot/client/command/**, so merging it reverts upstream's client/command -> cli/commands migration. Payload already self-dropped by its own commits 695f5787df (drop redundant OrderType hunk from common.py) and 4fbb0e6227 (drop OrderType extension test); the conditional OrderType enum now lives in the data-type-primitives L0 sub-package and reaches bleeding-edge via modular's common.py re-export shim. Zero parent: dependents — kraken-new-order-types was repointed to _for_bleed/common-data-types-shim on 2026-08-12. DISABLED NOT RETIRED: flip back to true to restore. Prior comment: re-enabled 2026-06-18 after promotion c83247374 was lost in the seed-v2 reseed.
         tier: feature
         description: "Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder"
         permanent: false
