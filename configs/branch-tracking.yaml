@@ -513,21 +513,6 @@ target_branches:
 
       # _for_bleed/import-linter-adoption: PROMOTED 2026-07-05 to ci-base tier as _for_ci/import-linter (framework/tooling, was mis-tiered); local+origin deleted, entry moved to ci-base.tracked_branches
 
-      - name: _for_bleed/executor-mixins
-        enabled: true  # re-enabled 2026-06-18: promotion db3641c54 was LOST in the seed-v2 ci-base reseed (2026-06-15 tip 4a901209c); 46 files / mixins+ExecutorFactory+rust NOT in ci-base — content recovered via rebuild loop
-        tier: feature
-        description: "7 shared executor mixins: Retry, BalanceValidation, Shutdown, OrderTracking, ActivationBounds, TrailingStop, PNLCalculator"
-        permanent: false
-        disable_when_in_development: true
-
-      - name: _for_bleed/add-executor-factory
-        enabled: true  # re-enabled 2026-06-18 alongside parent executor-mixins: same lost-promotion reason (db3641c54 lost in seed-v2 reseed)
-        tier: feature
-        description: "ExecutorFactory with decorator-based registration for all 8 executors"
-        permanent: false
-        disable_when_in_development: true
-        parent: _for_bleed/executor-mixins
-
       # _for_bleed/add-update-executor-action: RETIRED 2026-07-05 — UpdateExecutorAction already on ci-base (executor_actions.py:44); local+origin deleted, entry purged
 
       # --- Bleeding-edge-only patches ---
@@ -555,7 +540,6 @@ target_branches:
         enabled: true
         base: ci-base
         tier: feature
-        parent: _for_bleed/executor-mixins
         description: "ProgressiveExecutor feature v2 - depends on executor_base & controller interfaces. 2026-07-05: merged executor-mixins in (provides strategy_v2/utils/trailing_stop_manager.py) so standalone CI collects; declared parent executor-mixins."
         permanent: false
         disable_when_in_development: true
@@ -601,14 +585,6 @@ target_branches:
 
       # _for_bleed/patch-passwd-haskey-tests: CONSOLIDATED into ci-and-testing (2026-04-16)
       # _for_bleed/convert-to-pytest: CONSOLIDATED into ci-and-testing (2026-04-16)
-
-      # _for_bleed/add-new-order-types: PROMOTED to ci-base 2026-06-13 (SHA c83247374) via PR #59 (_for_ci/promote-position-exchange-executor) — Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder. RE-ENABLED 2026-06-18: promotion c83247374 LOST in seed-v2 reseed; content recovered via rebuild loop.
-      - name: _for_bleed/add-new-order-types
-        enabled: false  # DISABLED 2026-09-09: 1181-file stale whole-tree snapshot (merge-base fb44e9d7 dated 2026-07-05; last ci-base refresh 11cfada5c8 dated 2026-07-06). Its diff vs current ci-base spans hummingbot/cli/** AND hummingbot/client/command/**, so merging it reverts upstream's client/command -> cli/commands migration. Payload already self-dropped by its own commits 695f5787df (drop redundant OrderType hunk from common.py) and 4fbb0e6227 (drop OrderType extension test); the conditional OrderType enum now lives in the data-type-primitives L0 sub-package and reaches bleeding-edge via modular's common.py re-export shim. Zero parent: dependents — kraken-new-order-types was repointed to _for_bleed/common-data-types-shim on 2026-08-12. DISABLED NOT RETIRED: flip back to true to restore. Prior comment: re-enabled 2026-06-18 after promotion c83247374 was lost in the seed-v2 reseed.
-        tier: feature
-        description: "Conditional OrderType enum (STOP_LOSS, TAKE_PROFIT, TRAILING_STOP) + DelayedMarketOrder"
-        permanent: false
-        disable_when_in_development: true
 
       # _for_bleed/logger-callback-refactor: RETIRED 2026-08-06 — its whole payload (register_notify_handler / register_network_handler replacing the HummingbotApplication.main_application() lookup) is already in the hb-logger sub-package, which modular re-exports. Patching the now-deleted local class produced an invalid logger.py on bleeding-edge. local+origin deleted, entry purged. Deleted tip d2e8583174 -- recover with: git branch _for_bleed/logger-callback-refactor d2e8583174
 
@@ -675,20 +651,6 @@ target_branches:
       # _for_bleed/revert-mqtt-commlib: REROUTED 2026-06-16 → _for_ci/revert-mqtt-commlib (ci-base layer fix, not a feature)
 
       # _for_bleed/test-coverage: PROMOTED 2026-07-05 to ci-base tier as _for_ci/test-coverage (test-only content); origin deleted, entry moved to ci-base.tracked_branches
-
-      - name: _for_bleed_manual/drop-orphaned-vertex-user-stream-test
-        enabled: true
-        base: ci-base
-        tier: infrastructure
-        description: "Deletes the orphaned vertex user-stream data source test reintroduced by the seed each rebuild (upstream deleted source+test; the seed carries both, and the seed+development merge drops the source but keeps the test)"
-        permanent: false
-        disable_when_in_development: false
-        last_reviewed: "2026-08-07"
-        # Interim measure for MementoRC/hummingbot#72. disable_when_in_development MUST stay false:
-        # the file is already absent from development, so an auto-disable check would wrongly retire
-        # this branch — the Class-S "empty-vs-development is not a retire signal" trap.
-        # Durable fix is to drop the orphaned test when ci-base-seed-v1 is re-cut; retire this branch
-        # three-part (local + origin + this entry) at that point.
 
   accelerated:
     # Compiled-extension optimization layer above bleeding-edge (Rust, Cython).
