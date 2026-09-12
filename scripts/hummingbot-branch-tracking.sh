@@ -480,6 +480,25 @@ def is_dynamic(inner):
     return "(" in inner or "+" in inner
 
 
+def has_string_member(inner):
+    # A quoted top-level member means the annotation carries a forward
+    # reference. PEP 604 evaluates `"X" | None` eagerly wherever the annotation
+    # is not lazy — a class body (NamedTuple, pydantic model) or a bare
+    # annotated assignment — and raises
+    #   TypeError: unsupported operand type(s) for |: 'str' and 'NoneType'
+    # e.g. `config_keys: Optional["BaseConnectorConfigMap"]` in
+    # hummingbot/client/settings.py:80 (class ConnectorSetting(NamedTuple)),
+    # which aborted pytest collection in 7 test modules on cron run
+    # 20260912_030001. development has the correct Optional[...] form, so this
+    # corruption is generated fresh by this transform every rebuild and cannot
+    # be fixed from the development side.
+    # Only a LEADING quote matters: `Optional[Dict[str, "X"]]` is safe to
+    # convert, because the member itself is a real subscripted type.
+    # Skipping also keeps `Optional`/`Union` in use, so the ruff F401 pass will
+    # not prune the import and leave a bare undefined name behind.
+    return any(p[:1] in ("'", '"') for p in split_top_level(inner))
+
+
 def convert_optional_union(text):
     pos = 0
     while True:
@@ -491,7 +510,7 @@ def convert_optional_union(text):
         if close_idx == -1:
             break
         inner = text[open_idx + 1:close_idx]
-        if is_dynamic(inner):
+        if is_dynamic(inner) or has_string_member(inner):
             # Preserve the wrapper; resume scanning past it.
             pos = close_idx + 1
             continue
