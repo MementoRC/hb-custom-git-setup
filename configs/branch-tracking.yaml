@@ -231,7 +231,7 @@ target_branches:
       # It is NOT the cause of the missing builder-fee symbols - those are absent from
       # ci-base with this branch enabled OR disabled. Do not disable to chase builder-fee.
       - name: _for_ci/restore-stale-seed-connector-sources
-        enabled: false  # disabled 2026-09-05: stale snapshot reverted live gateway content; residue now handled by _for_ci/purge-seed-residue
+        enabled: true  # RE-ENABLED 2026-09-12 by operator decision. Was disabled 2026-09-05 (stale snapshot reverted live gateway content; residue handled by _for_ci/purge-seed-residue). WATCH: verify this does not re-revert gateway_http_client.py/_body/is_slippage_failure and does not collide with the still-enabled _for_ci/purge-seed-residue.
         tier: infrastructure
         description: "Restore binance_perpetual_api_order_book_data_source.py + binance_perpetual_user_stream_data_source.py + bitget_perpetual_derivative.py to origin/development content. The frozen ci-base-seed-v1 py312 mass-transform drags stale copies of these SOURCE files through the rebuild merge while their TEST files track development, so current tests run against stale source and abort the ci-base test gate (rebuild 20260722_164432: 4 binance + 2 bitget failures). Both connectors internally consistent on development (not upstream-red). Re-creates the prematurely-retired _for_ci/fix-bitget-limit-maker-order-type. Class-S restore: branch has ci-base ancestry (a development-based fix is a merge no-op). Commit b8fdce85, GPG-signed. Added 2026-07-22. Also restores hyperliquid_auth.py + hyperliquid_perpetual_auth.py + hyperliquid_exchange.py + hyperliquid_perpetual_derivative.py to origin/development content — same Class-S signature (35 key-authority failures on rebuild 20260819_111808: AttributeError no attribute 'is_key_authorized' / '_verify_key_authority'). Restored content re-modernized to ci-base py312 annotation style (future-import, PEP 585/604) so the full-file restore merges clean. Commit 6a3ddb98, GPG-signed, separate from b8fdce85 so either half can be reverted independently. Added 2026-08-20. Superseded by a seed re-cut dropping the py312 mass-transform."
         permanent: false
@@ -274,7 +274,7 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/import-linter
-        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
+        enabled: true  # RE-ENABLED 2026-09-12 by operator decision (restores ADR 0001 import-linter enforcement). Was disabled 2026-09-05 (carries stale ci-base snapshot, 19-26 automerges; payload was to be re-derived onto development). WATCH: stale-snapshot reverts.
         tier: infrastructure
         description: "PROMOTED 2026-07-05 from _for_bleed/import-linter-adoption (was mis-tiered as a bleeding-edge feature). Replace tach with import-linter for sub-package boundary enforcement: .importlinter (13 contracts enforcing hb_compat/ across 14 sub-packages) + pyproject.toml import-linter dep + lint-boundaries pixi task. Pure tooling/framework, belongs on ci-base. Clean 2-file delta off ci-base; carries ci-base ancestry (pyproject change depends on ci-base pixi config), same class as fix-pd-timestamp-utc. Verified: lint-imports 13 kept/0 broken/332ms."
         permanent: false
@@ -487,6 +487,20 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      # RE-NESTED 2026-09-12 from bleeding-edge.tracked_branches. The entry already
+      # declared base: modular (it consumes the strategy_framework sub-package) but was
+      # nested under bleeding-edge, and nesting — not the base: field — is what
+      # get_tracked_branches() reads for routing. Symptom: cron run 20260912_030001
+      # reported "_for_bleed/strategy-framework has conflicts with modular /
+      # Mergeability check failed (against modular)". Nesting now matches base:.
+      - name: _for_bleed/strategy-framework
+        enabled: true
+        base: modular
+        tier: feature
+        description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter. Regenerated 2026-07-05 off clean modular (4 files, commit 848296b3) to shed bundled wiring; base:modular because it consumes sub-packages."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
@@ -550,14 +564,7 @@ target_branches:
       # _for_bleed/pixi-workspace: PROMOTED to ci-base (2026-04-19)
       # CI workflow, .gitmodules, .gitignore now owned by ci-base.
 
-      # _for_bleed/strategy-framework: MOVED to modular.tracked_branches (2026-06-14); MOVED BACK to bleeding-edge (2026-06-15)
-      - name: _for_bleed/strategy-framework
-        enabled: true
-        base: modular
-        tier: feature
-        description: "OrchestratorBridge: thin StrategyV2Base delegating to strategy_framework.hb_compat.OrchestratorAdapter. Regenerated 2026-07-05 off clean modular (4 files, commit 848296b3) to shed bundled wiring; base:modular because it consumes sub-packages."
-        permanent: false
-        disable_when_in_development: true
+      # _for_bleed/strategy-framework: MOVED to modular.tracked_branches (2026-06-14); MOVED BACK to bleeding-edge (2026-06-15); RE-NESTED to modular.tracked_branches again 2026-09-12 — it declares base: modular and nesting is what determines routing, so it belongs in the modular list. See the entry there.
 
       # _for_bleed/exceptions-shim: MOVED 2026-08-05 to modular.tracked_branches — the bleeding-edge test gate runs the full pytest suite BEFORE install-subpackages, so a shim importing data_type_primitives fails collection (exit=2) and gets reverted. Same structural reason dedupe-hummingbot-logger was re-tiered.
 
