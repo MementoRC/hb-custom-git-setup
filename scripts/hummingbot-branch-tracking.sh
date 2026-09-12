@@ -1249,8 +1249,9 @@ sync_modular_branch() {
         # check would skip the merge and the bug perpetuates.
         if git ls-remote --exit-code origin "refs/heads/$modular_branch" >/dev/null 2>&1; then
             git fetch origin "$modular_branch" >/dev/null 2>&1 || true
-            git reset --hard "origin/$modular_branch" >/dev/null 2>&1 || {
-                log_error "Failed to reset $modular_branch to origin/$modular_branch"
+            local reset_err
+            reset_err="$(git reset --hard "origin/$modular_branch" 2>&1 >/dev/null)" || {
+                log_error "Failed to reset $modular_branch to origin/$modular_branch: ${reset_err:-unknown git error}"
                 return 1
             }
             log_operation "Reset $modular_branch to origin/$modular_branch tip"
@@ -1280,7 +1281,10 @@ sync_modular_branch() {
                         pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
                             logical_conflicts+=("$file") ;;
                         *)
-                            if conflict_is_format_only "$file"; then
+                            if modular_owns_path "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("modular_owned")
+                            elif conflict_is_format_only "$file"; then
                                 format_only+=("$file")
                                 resolve_side+=("theirs")
                             elif conflict_ci_base_is_subset "$file"; then
@@ -1302,10 +1306,14 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                local format_only_count=0 subset_count=0 modular_subset_count=0
+                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0
                 for i in "${!format_only[@]}"; do
                     f="${format_only[$i]}"
-                    if [ "${resolve_side[$i]}" = "ours" ]; then
+                    if [ "${resolve_side[$i]}" = "modular_owned" ]; then
+                        git checkout --ours "$f" 2>/dev/null
+                        log_detail "  modular-owned $f: kept modular's version (declared in modular_owned_paths)"
+                        owned_count=$((owned_count + 1))
+                    elif [ "${resolve_side[$i]}" = "ours" ]; then
                         git checkout --ours "$f" 2>/dev/null
                         subset_count=$((subset_count + 1))
                     elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
@@ -1322,7 +1330,7 @@ sync_modular_branch() {
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base))"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular))"
             fi
         fi
     else
@@ -1544,6 +1552,28 @@ merge_for_modular_branches() {
 read_subpackage_tracking() {
     local cfg="${1:-$BRANCH_CONFIG}"
     yq -r '.subpackage_tracking // {} | to_entries[] | "\(.key) \(.value)"' "$cfg" 2>/dev/null
+}
+
+read_modular_owned_paths() {
+    local cfg="${1:-$BRANCH_CONFIG}"
+    yq -r '.modular_owned_paths // [] | .[]' "$cfg" 2>/dev/null
+}
+
+# True when $1 matches a path or glob listed under modular_owned_paths in the
+# branch-tracking config. Such files are modular-OWNED: modular deliberately
+# replaces ci-base's implementation (a Recipe-1 re-export shim pointing at a
+# sub-package). Keeping modular's side is the intended outcome, not a discard.
+# Only list a path whose modular version is a genuine shim -- never one that
+# merely looks stale, or ci-base fixes get silently dropped.
+modular_owns_path() {
+    local file="$1" pattern
+    while IFS= read -r pattern; do
+        [ -z "$pattern" ] && continue
+        case "$file" in
+            $pattern) return 0 ;;
+        esac
+    done < <(read_modular_owned_paths)
+    return 1
 }
 
 ###############################################################################

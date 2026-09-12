@@ -699,3 +699,19 @@ subpackage_tracking:
   strategy-framework: development
   user-stream-tracker: development
   web-assistant: development
+
+# Paths the modular tier deliberately OWNS. On a ci-base -> modular merge conflict
+# these resolve to modular's side instead of aborting the rebuild as a logical
+# conflict.
+#
+# ONLY list a path whose modular version is a genuine re-export shim (docstring +
+# a sub-package import + __all__, no logic). A file that merely looks stale does
+# NOT belong here: resolving it toward modular silently discards ci-base fixes.
+# Verified 2026-09-11 -- user_stream_tracker_data_source.py (9 lines vs ci-base's
+# 125) and logger/logger.py (21 vs 110) are both pure shims re-exporting from the
+# user-stream-tracker and logger sub-packages. By contrast grid_executor.py and
+# the two lighter candles tests were REJECTED from this list: modular's copies are
+# stale snapshots carried by _for_bleed/modular-regen, and ci-base must win there.
+modular_owned_paths:
+  - hummingbot/core/data_type/user_stream_tracker_data_source.py
+  - hummingbot/logger/logger.py
