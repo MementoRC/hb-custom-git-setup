@@ -636,6 +636,30 @@ pin_aiomqtt_transport() {
         sed -i '/^commlib-py[[:space:]]*=/d' pyproject.toml
     fi
 
+    # This function pins the aiomqtt transport, so it must also own aiomqtt's
+    # DECLARATION - otherwise the two halves desync. Observed 2026-09-13: the
+    # declaration lived only in _for_ci/add-aiomqtt-dep, which merged as a false
+    # "content already present - no-op", while this pin still rewrote mqtt.py to a
+    # bare `import aiomqtt` and stripped commlib-py. ci-base shipped the import
+    # without the dep; the gate then re-solved pixi.lock from that pyproject, and 39
+    # of 41 collection errors were ModuleNotFoundError: aiomqtt. Idempotent - inserts
+    # only when absent, so a tier where the branch DID land is unaffected.
+    if [ -f pyproject.toml ] && ! grep -qE '^[[:space:]]*aiomqtt[[:space:]]*=' pyproject.toml; then
+        if awk '
+            /^\[/ { in_pixi = ($0 ~ /^\[tool\.pixi\.dependencies\][[:space:]]*$/) }
+            { print }
+            in_pixi && !inserted && /^[[:space:]]*aiohttp[[:space:]]*=/ { print "aiomqtt = \">=2.0.0\""; inserted = 1 }
+            END { exit(inserted ? 0 : 1) }
+        ' pyproject.toml > pyproject.toml.pin-aiomqtt; then
+            mv pyproject.toml.pin-aiomqtt pyproject.toml
+            echo "[pin-aiomqtt] added aiomqtt >=2.0.0 to [tool.pixi.dependencies] (tier: ${tier})"
+        else
+            rm -f pyproject.toml.pin-aiomqtt
+            echo "[pin-aiomqtt] ERROR: could not insert aiomqtt into [tool.pixi.dependencies] (anchor 'aiohttp =' not found) - tier ${tier} would fail its gate on ModuleNotFoundError: aiomqtt"
+            return 1
+        fi
+    fi
+
     git add "${transport_files[@]}" pyproject.toml 2>/dev/null || true
     if git diff --cached --quiet; then
         echo "[pin-aiomqtt] transport already matches upstream aiomqtt (tier: ${tier}); no pin commit needed"
@@ -646,7 +670,7 @@ pin_aiomqtt_transport() {
         # from a concurrent git process, yet the log claimed the bleeding-edge pin
         # was committed — it was not, and the tier shipped without the pin).
         if git commit -S --no-verify -m "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" \
-            -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin."; then
+            -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin - and ensure aiomqtt >=2.0.0 is declared, so the pinned transport's dependency is never left to a separate tracked branch."; then
             echo "[pin-aiomqtt] committed aiomqtt transport pin (tier: ${tier})"
         else
             echo "[pin-aiomqtt] ERROR: transport pin commit FAILED (tier: ${tier}) — this tier does NOT carry the aiomqtt pin"
