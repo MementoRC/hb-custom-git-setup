@@ -2573,6 +2573,183 @@ is_branch_feature_only() {
 ###############################################################################
 # Main Execution
 ###############################################################################
+# ----------------------------------------------------------------------------
+# gate_and_push_branch <branch>
+# The pre-push CI gate for ONE branch, extracted verbatim from the tier loop so
+# it can run at two points: early for ci-base (before the modular merge) and in
+# the tier loop for everything else. 0 = gated green + pushed, 1 = failed; the
+# caller decides whether to abort or continue. Caller must resolve $_pixi_cmd.
+# ----------------------------------------------------------------------------
+gate_and_push_branch() {
+    local _gate_branch="$1"
+    local _changed _q_ok _quality_log _pr_script
+
+      log_step "Gating $_gate_branch (quality + tests)"
+      if ! git -C "$REPO_PATH" checkout "$_gate_branch" >& /dev/null; then
+          log_error "  checkout $_gate_branch failed — aborting gate"
+          touch "$RUN_LOG_DIR/.gate_failed"
+          return 1
+      fi
+
+      # `git checkout` moves the recorded gitlinks but does NOT touch submodule
+      # working trees, so without this the gate would build and test whatever the
+      # PREVIOUS tier left on disk. Sync the trees to the pins this branch actually
+      # records before quality/build/test run. --init also populates submodules
+      # added since the last checkout, which would otherwise be empty directories
+      # and fail `pip install -e` during install-subpackages.
+      if [ -f "$REPO_PATH/.gitmodules" ]; then
+          if ! git -C "$REPO_PATH" submodule update --init --recursive >& "$RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"; then
+              log_error "  Submodule sync FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && git submodule update --init --recursive — see $RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          log_detail "  submodules: synced to recorded pins"
+      fi
+
+      _q_ok=true
+      _quality_log="$RUN_LOG_DIR/gate_quality_${_gate_branch}.log"
+      : > "$_quality_log"
+      _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+      if [ -n "$_changed" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1; then
+              if ! git -C "$REPO_PATH" diff --quiet; then
+                  git -C "$REPO_PATH" add -A -- . ':!sub-packages'
+                  git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
+                      -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
+              fi
+              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+              if [ -n "$_changed" ]; then
+                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
+              fi
+          fi
+      fi
+      if [ "$_q_ok" = true ]; then
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint ) >> "$_quality_log" 2>&1 || _q_ok=false
+      fi
+      if [ "$_q_ok" = true ]; then
+          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci format-check ) >> "$_quality_log" 2>&1 || _q_ok=false
+      fi
+      if [ "$_q_ok" != true ]; then
+          log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check — see $_quality_log"
+          touch "$RUN_LOG_DIR/.gate_failed"
+          return 1
+      fi
+      log_detail "  quality: pass"
+
+      if [ "$_gate_branch" = "ci-base" ]; then
+          # ci-base owns the canonical solve: pixi.lock is merge-contested (a stale branch
+          # lock can drop newly-added deps like aiomqtt), so re-solve from the merged pyproject.
+          echo "[lock-resolve] re-solving pixi.lock from merged pyproject for $_gate_branch"
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
+              log_error "  Lock regen FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi lock — see $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+      else
+          # modular / bleeding-edge: reuse ci-base's canonical re-solved lock. The
+          # [tool.pixi.dependencies] blocks are identical across all three tiers, so an
+          # independent re-solve here only introduces version drift (different transitive
+          # picks -> non-deterministic tier failures) and costs an extra full conda solve.
+          echo "[lock-resolve] pinning pixi.lock from ci-base for $_gate_branch (identical deps; avoids drift)"
+          if ! ( cd "$REPO_PATH" && git checkout ci-base -- pixi.lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
+              log_error "  Lock pin from ci-base FAILED on $_gate_branch — NOT pushing. See $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+      fi
+      ( cd "$REPO_PATH" && git add pixi.lock && { git diff --cached --quiet || git commit -S --no-verify -m "chore(lock): pin pixi.lock ($_gate_branch)"; } )
+
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& "$RUN_LOG_DIR/gate_build_${_gate_branch}.log"; then
+          log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build — see $RUN_LOG_DIR/gate_build_${_gate_branch}.log"
+          touch "$RUN_LOG_DIR/.gate_failed"
+          return 1
+      fi
+      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${PYTEST_GATE_ARGS[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
+          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${PYTEST_GATE_ARGS[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
+          touch "$RUN_LOG_DIR/.gate_failed"
+          return 1
+      fi
+      log_detail "  tests: pass"
+
+      # Boundaries-gate: modular tier and above ONLY. ci-base carries .importlinter and
+      # the lint-boundaries task but installs ZERO sub-packages, so import-linter cannot
+      # resolve the contracts' root packages (async_utils, event_bus, ...) there. Skipping
+      # ci-base is deliberate: running it would fail a currently-green tier on a missing
+      # precondition, not a real violation.
+      #
+      # Blocking ON PURPOSE. The cron wrapper's Step 3 also runs lint-boundaries, but is
+      # explicitly advisory there (accumulates into MODULAR_FAILURES, never escalates
+      # OVERALL_STATUS) — which is why an adr-0001 layers break introduced by the
+      # user_stream_tracker re-export shims gated green through all four tiers on
+      # 2026-08-07 and sat unfixed for days. This gate blocks the push instead.
+      if [ "$_gate_branch" != "ci-base" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint-boundaries ) >& "$RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"; then
+              log_error "  Boundaries gate FAILED on $_gate_branch — import-linter contract broken; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint-boundaries — see $RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          log_detail "  boundaries: pass (import-linter)"
+      fi
+
+      # Compile-gate: accelerated tier ONLY. Rust cargo build + Cython build_ext
+      # must both succeed before accelerated is pushed. A failure here aborts the
+      # push for accelerated ONLY (via the same _gate_failed=true; break as every
+      # other gate step above) — it does NOT retroactively un-push ci-base/modular/
+      # $FEATURE_BRANCH, which already gated green and pushed earlier in this loop.
+      if [ "$_gate_branch" = "accelerated" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml ) >& "$RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (cargo build) — NOT pushing. Inspect: cd $REPO_PATH && $_pixi_cmd run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml — see $RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python setup.py build_ext --inplace ) >& "$RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (build_ext) — NOT pushing. Inspect: cd $REPO_PATH && python setup.py build_ext --inplace — see $RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          # Augmented-pure-python compile (Phase 3): compile candles-feed's augmented
+          # DataProcessor to a native extension. NON-editable wheel build (the build hook
+          # is registered on hatchling's wheel target, so `pip install -e` would NOT fire
+          # it); HB_COMPILE_AUGMENTED gates the hook; PYTHONPATH supplies the maintainer-
+          # local hb-cython-framework (sibling repo, dev/CI-only, never a published dep).
+          # The hook FAILS CLOSED to a passive pure-Python wheel if the framework is
+          # unavailable, so the native extension is asserted immediately below.
+          if ! ( cd "$REPO_PATH" && HB_COMPILE_AUGMENTED=1 PYTHONPATH="$(dirname "$REPO_PATH")/hb-cython-framework" "$_pixi_cmd" run --frozen -e ci python -m pip install --no-deps --no-build-isolation --force-reinstall sub-packages/candles-feed ) >& "$RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch (augmented DataProcessor build) — NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python -c "import candles_feed.core.data_processor as m, sys; sys.exit(0 if m.__file__.endswith(('.so', '.pyd')) else 1)" ) >& "$RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"; then
+              log_error "  Compile gate FAILED on $_gate_branch — augmented DataProcessor did NOT compile to a native extension (hook fail-closed / hb-cython-framework missing at $(dirname "$REPO_PATH")/hb-cython-framework?). NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          log_detail "  compile: pass (cargo build + build_ext + augmented DataProcessor)"
+      fi
+
+      if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+          log_result true "$_gate_branch gated green + pushed"
+          # Refresh this layer's squashed single-commit review snapshot right
+          # after it is pushed green, so each <branch>-pr reflects the latest
+          # green tree even if a LATER branch in the loop fails its gate.
+          # Checkout-safe: regenerate scripts use commit-tree + refspec push and
+          # never touch HEAD or the working tree.
+          _pr_script="$(dirname "${BASH_SOURCE[0]}")/regenerate-${_gate_branch}-pr.sh"
+          # [ -f ] not [ -x ]: invoked via `bash <script>`, which does not require the
+          # execute bit (chmod +x is not reliably available in the rebuild environment).
+          if [ -f "$_pr_script" ] && bash "$_pr_script" "$REPO_PATH" >& /dev/null; then
+              log_result true "regenerated + pushed ${_gate_branch}-pr (green)"
+          else
+              log_error "  ${_gate_branch}-pr NOT refreshed (regenerate-${_gate_branch}-pr.sh missing or failed) — run it manually"
+          fi
+          return 0
+      else
+          log_error "  push FAILED for $_gate_branch (gates passed) — run: git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
+          touch "$RUN_LOG_DIR/.gate_failed"
+          return 1
+      fi
+}
+
 main() {
   log_header "$(colorize "$BLUE" "Branch Tracking")"
 
@@ -2598,6 +2775,12 @@ main() {
   fi
 
   REBUILD_MODE=false
+  # Gate state hoisted: the ci-base gate now runs inside the rebuild block (Step 1c),
+  # before the tier loop below re-uses the same vars.
+  local _pixi_cmd="" _gate_branch
+  local -a _pushed=()
+  local _gate_failed=false
+  local CI_BASE_ALREADY_GATED=false
 
   if [ "$1" = "--rebuild" ]; then
       REBUILD_MODE=true
@@ -2626,6 +2809,25 @@ main() {
       if [ "$REBUILD_MODE" = "true" ]; then
           git checkout "$root_base_branch" >& /dev/null
           assert_ci_base_purity || exit 1
+      fi
+
+      # Step 1c: gate + push ci-base NOW, before modular. ci-base's health must not
+      # be hostage to a downstream tier. The modular merge aborts deterministically
+      # while modular carries stale ci-base ancestry, and with the gate downstream
+      # that abort silently blocked every ci-base fix from being verified or
+      # published (4 consecutive runs, 2026-09-12/13). Gating here also advances
+      # origin/ci-base — which is what stops sync_modular_branch resetting onto an
+      # ever-staler origin tip on the next run.
+      if ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
+          log_error "pixi not found — cannot run CI-identical gate; refusing to push unverified ci-base"
+          exit 1
+      fi
+      if gate_and_push_branch "ci-base"; then
+          _pushed+=("ci-base")
+          CI_BASE_ALREADY_GATED=true
+      else
+          log_error "ci-base gate failed — rebuild aborted (nothing downstream builds on a red ci-base)"
+          exit 1
       fi
 
       # Step 2: if FEATURE_BRANCH is bleeding-edge (base = modular), advance modular.
@@ -2861,194 +3063,36 @@ main() {
   # any failure: branches left built-but-unpushed, exit 1 so cron/operator sees it,
   # ci-base-pr NOT refreshed. NOTE: full build+test per branch is intentionally
   # expensive — correctness over speed, per requirement.
-  # accelerated (when declared) is gated LAST, after ci-base/modular/bleeding-edge
-  # have already gated green and pushed within this same loop — a compile-gate
-  # (cargo build / build_ext) or quality/test failure on accelerated only halts
-  # further iterations, it does NOT block or un-push the earlier tiers.
+  # accelerated (when declared) is gated LAST, after modular/bleeding-edge have
+  # already gated green and pushed in this loop (ci-base gates EARLIER, at Step 1c
+  # in main(), before the modular merge) — a compile-gate (cargo build / build_ext)
+  # or quality/test failure on accelerated only halts further iterations, it does
+  # NOT block or un-push the earlier tiers.
   # ----------------------------------------------------------------------------
   log_section "Pre-push CI gate (quality + tests, CI-identical)"
-  local _pixi_cmd="" _gate_branch _changed _q_ok
-  local -a _pushed=()
-  local _gate_failed=false
-  if ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
+  if [ -z "$_pixi_cmd" ] && ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
       log_error "pixi not found — cannot run CI-identical gate; refusing to push unverified branches"
       exit 1
   fi
-  # accelerated is gated LAST, after ci-base/modular/$FEATURE_BRANCH have already
-  # been gated + pushed inside this same loop. This ordering IS the isolation
+  # accelerated is gated LAST, after modular/$FEATURE_BRANCH have already been
+  # gated + pushed inside this loop (ci-base gated earlier, Step 1c). This
+  # ordering IS the isolation
   # mechanism: a `break` triggered by an accelerated-only failure (quality/tests/
   # compile-gate) only stops further iterations — it cannot un-push a tier that
   # already gated green and pushed earlier in the loop. Only add "accelerated" to
   # the loop if the tier is actually declared in the YAML (keeps this script
   # working unmodified against older configs without the tier).
-  local -a _gate_branches=("ci-base" "modular" "$FEATURE_BRANCH")
+  local -a _gate_branches=()
+  [ "$CI_BASE_ALREADY_GATED" = true ] || _gate_branches+=("ci-base")
+  _gate_branches+=("modular" "$FEATURE_BRANCH")
   if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
       _gate_branches+=("accelerated")
   fi
 
   for _gate_branch in "${_gate_branches[@]}"; do
-      log_step "Gating $_gate_branch (quality + tests)"
-      if ! git -C "$REPO_PATH" checkout "$_gate_branch" >& /dev/null; then
-          log_error "  checkout $_gate_branch failed — aborting gate"
-          touch "$RUN_LOG_DIR/.gate_failed"
-          _gate_failed=true; break
-      fi
-
-      # `git checkout` moves the recorded gitlinks but does NOT touch submodule
-      # working trees, so without this the gate would build and test whatever the
-      # PREVIOUS tier left on disk. Sync the trees to the pins this branch actually
-      # records before quality/build/test run. --init also populates submodules
-      # added since the last checkout, which would otherwise be empty directories
-      # and fail `pip install -e` during install-subpackages.
-      if [ -f "$REPO_PATH/.gitmodules" ]; then
-          if ! git -C "$REPO_PATH" submodule update --init --recursive >& "$RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"; then
-              log_error "  Submodule sync FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && git submodule update --init --recursive — see $RUN_LOG_DIR/gate_submodule_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          log_detail "  submodules: synced to recorded pins"
-      fi
-
-      _q_ok=true
-      _quality_log="$RUN_LOG_DIR/gate_quality_${_gate_branch}.log"
-      : > "$_quality_log"
-      _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
-      if [ -n "$_changed" ]; then
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1; then
-              if ! git -C "$REPO_PATH" diff --quiet; then
-                  git -C "$REPO_PATH" add -A -- . ':!sub-packages'
-                  git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
-                      -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
-              fi
-              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
-              if [ -n "$_changed" ]; then
-                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
-              fi
-          fi
-      fi
-      if [ "$_q_ok" = true ]; then
-          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint ) >> "$_quality_log" 2>&1 || _q_ok=false
-      fi
-      if [ "$_q_ok" = true ]; then
-          ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci format-check ) >> "$_quality_log" 2>&1 || _q_ok=false
-      fi
-      if [ "$_q_ok" != true ]; then
-          log_error "  Quality gate FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint && pixi run -e ci format-check — see $_quality_log"
-          touch "$RUN_LOG_DIR/.gate_failed"
-          _gate_failed=true; break
-      fi
-      log_detail "  quality: pass"
-
-      if [ "$_gate_branch" = "ci-base" ]; then
-          # ci-base owns the canonical solve: pixi.lock is merge-contested (a stale branch
-          # lock can drop newly-added deps like aiomqtt), so re-solve from the merged pyproject.
-          echo "[lock-resolve] re-solving pixi.lock from merged pyproject for $_gate_branch"
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
-              log_error "  Lock regen FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi lock — see $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-      else
-          # modular / bleeding-edge: reuse ci-base's canonical re-solved lock. The
-          # [tool.pixi.dependencies] blocks are identical across all three tiers, so an
-          # independent re-solve here only introduces version drift (different transitive
-          # picks -> non-deterministic tier failures) and costs an extra full conda solve.
-          echo "[lock-resolve] pinning pixi.lock from ci-base for $_gate_branch (identical deps; avoids drift)"
-          if ! ( cd "$REPO_PATH" && git checkout ci-base -- pixi.lock ) >& "$RUN_LOG_DIR/gate_lock_${_gate_branch}.log"; then
-              log_error "  Lock pin from ci-base FAILED on $_gate_branch — NOT pushing. See $RUN_LOG_DIR/gate_lock_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-      fi
-      ( cd "$REPO_PATH" && git add pixi.lock && { git diff --cached --quiet || git commit -S --no-verify -m "chore(lock): pin pixi.lock ($_gate_branch)"; } )
-
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& "$RUN_LOG_DIR/gate_build_${_gate_branch}.log"; then
-          log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build — see $RUN_LOG_DIR/gate_build_${_gate_branch}.log"
-          touch "$RUN_LOG_DIR/.gate_failed"
-          _gate_failed=true; break
-      fi
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${PYTEST_GATE_ARGS[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
-          log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${PYTEST_GATE_ARGS[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
-          touch "$RUN_LOG_DIR/.gate_failed"
-          _gate_failed=true; break
-      fi
-      log_detail "  tests: pass"
-
-      # Boundaries-gate: modular tier and above ONLY. ci-base carries .importlinter and
-      # the lint-boundaries task but installs ZERO sub-packages, so import-linter cannot
-      # resolve the contracts' root packages (async_utils, event_bus, ...) there. Skipping
-      # ci-base is deliberate: running it would fail a currently-green tier on a missing
-      # precondition, not a real violation.
-      #
-      # Blocking ON PURPOSE. The cron wrapper's Step 3 also runs lint-boundaries, but is
-      # explicitly advisory there (accumulates into MODULAR_FAILURES, never escalates
-      # OVERALL_STATUS) — which is why an adr-0001 layers break introduced by the
-      # user_stream_tracker re-export shims gated green through all four tiers on
-      # 2026-08-07 and sat unfixed for days. This gate blocks the push instead.
-      if [ "$_gate_branch" != "ci-base" ]; then
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci lint-boundaries ) >& "$RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"; then
-              log_error "  Boundaries gate FAILED on $_gate_branch — import-linter contract broken; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci lint-boundaries — see $RUN_LOG_DIR/gate_boundaries_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          log_detail "  boundaries: pass (import-linter)"
-      fi
-
-      # Compile-gate: accelerated tier ONLY. Rust cargo build + Cython build_ext
-      # must both succeed before accelerated is pushed. A failure here aborts the
-      # push for accelerated ONLY (via the same _gate_failed=true; break as every
-      # other gate step above) — it does NOT retroactively un-push ci-base/modular/
-      # $FEATURE_BRANCH, which already gated green and pushed earlier in this loop.
-      if [ "$_gate_branch" = "accelerated" ]; then
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml ) >& "$RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"; then
-              log_error "  Compile gate FAILED on $_gate_branch (cargo build) — NOT pushing. Inspect: cd $REPO_PATH && $_pixi_cmd run --frozen -e ci cargo build --release --manifest-path hummingbot/rust/Cargo.toml — see $RUN_LOG_DIR/gate_cargo_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python setup.py build_ext --inplace ) >& "$RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"; then
-              log_error "  Compile gate FAILED on $_gate_branch (build_ext) — NOT pushing. Inspect: cd $REPO_PATH && python setup.py build_ext --inplace — see $RUN_LOG_DIR/gate_buildext_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          # Augmented-pure-python compile (Phase 3): compile candles-feed's augmented
-          # DataProcessor to a native extension. NON-editable wheel build (the build hook
-          # is registered on hatchling's wheel target, so `pip install -e` would NOT fire
-          # it); HB_COMPILE_AUGMENTED gates the hook; PYTHONPATH supplies the maintainer-
-          # local hb-cython-framework (sibling repo, dev/CI-only, never a published dep).
-          # The hook FAILS CLOSED to a passive pure-Python wheel if the framework is
-          # unavailable, so the native extension is asserted immediately below.
-          if ! ( cd "$REPO_PATH" && HB_COMPILE_AUGMENTED=1 PYTHONPATH="$(dirname "$REPO_PATH")/hb-cython-framework" "$_pixi_cmd" run --frozen -e ci python -m pip install --no-deps --no-build-isolation --force-reinstall sub-packages/candles-feed ) >& "$RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"; then
-              log_error "  Compile gate FAILED on $_gate_branch (augmented DataProcessor build) — NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci python -c "import candles_feed.core.data_processor as m, sys; sys.exit(0 if m.__file__.endswith(('.so', '.pyd')) else 1)" ) >& "$RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"; then
-              log_error "  Compile gate FAILED on $_gate_branch — augmented DataProcessor did NOT compile to a native extension (hook fail-closed / hb-cython-framework missing at $(dirname "$REPO_PATH")/hb-cython-framework?). NOT pushing. See $RUN_LOG_DIR/gate_compile_augmented_verify_${_gate_branch}.log"
-              touch "$RUN_LOG_DIR/.gate_failed"
-              _gate_failed=true; break
-          fi
-          log_detail "  compile: pass (cargo build + build_ext + augmented DataProcessor)"
-      fi
-
-      if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+      if gate_and_push_branch "$_gate_branch"; then
           _pushed+=("$_gate_branch")
-          log_result true "$_gate_branch gated green + pushed"
-          # Refresh this layer's squashed single-commit review snapshot right
-          # after it is pushed green, so each <branch>-pr reflects the latest
-          # green tree even if a LATER branch in the loop fails its gate.
-          # Checkout-safe: regenerate scripts use commit-tree + refspec push and
-          # never touch HEAD or the working tree.
-          _pr_script="$(dirname "${BASH_SOURCE[0]}")/regenerate-${_gate_branch}-pr.sh"
-          # [ -f ] not [ -x ]: invoked via `bash <script>`, which does not require the
-          # execute bit (chmod +x is not reliably available in the rebuild environment).
-          if [ -f "$_pr_script" ] && bash "$_pr_script" "$REPO_PATH" >& /dev/null; then
-              log_result true "regenerated + pushed ${_gate_branch}-pr (green)"
-          else
-              log_error "  ${_gate_branch}-pr NOT refreshed (regenerate-${_gate_branch}-pr.sh missing or failed) — run it manually"
-          fi
       else
-          log_error "  push FAILED for $_gate_branch (gates passed) — run: git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
-          touch "$RUN_LOG_DIR/.gate_failed"
           _gate_failed=true; break
       fi
   done
