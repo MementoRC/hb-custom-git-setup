@@ -273,10 +273,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/import-linter
-        enabled: true  # RE-ENABLED 2026-09-12 by operator decision (restores ADR 0001 import-linter enforcement). Was disabled 2026-09-05 (carries stale ci-base snapshot, 19-26 automerges; payload was to be re-derived onto development). WATCH: stale-snapshot reverts.
+      - name: _for_ci/import-linter-rederived
+        enabled: true  # RE-DERIVED 2026-09-13, replaces _for_ci/import-linter (retired same day, three-part). WATCH: the merge verdict line should now report ZERO files reverting live upstream content.
         tier: infrastructure
-        description: "PROMOTED 2026-07-05 from _for_bleed/import-linter-adoption (was mis-tiered as a bleeding-edge feature). Replace tach with import-linter for sub-package boundary enforcement: .importlinter (13 contracts enforcing hb_compat/ across 14 sub-packages) + pyproject.toml import-linter dep + lint-boundaries pixi task. Pure tooling/framework, belongs on ci-base. Clean 2-file delta off ci-base; carries ci-base ancestry (pyproject change depends on ci-base pixi config), same class as fix-pd-timestamp-utc. Verified: lint-imports 13 kept/0 broken/332ms."
+        description: "RE-DERIVED 2026-09-13 from _for_ci/import-linter (tip f3f0c50a), which had drifted into a whole-tree stale snapshot - 1163 files changed vs origin/development, 80 reverting live upstream content on every merge. CAUSALLY PROVEN to produce both remaining ci-base gate collection errors on run 20260913_202845: gateway_http_client.py lost _body/_query and gateway_utils.py lost is_slippage_failure (verified ABSENT at the old tip, PRESENT on origin/development). Genuine payload is only .importlinter (242 lines, contracts enforcing hb_compat/ across 14 sub-packages, accumulated over 6 commits ending at the async_utils.hb_compat.common -> logger carve-out) plus 4 lines of pyproject.toml wiring (import-linter dep + lint-boundaries task); both reproduced verbatim, no source file touched. Based off ci-base-seed-v1 rather than origin/development, per the _for_ci/add-aiomqtt-dep precedent: development's pyproject.toml is a pre-pixi file with no [tool.pixi.*] tables so the wiring has nowhere to land there, and the frozen tag cannot re-stale the branch on the next rebuild. Commit 760ce8b2, GPG-verified. NOTE: import-linter is declared as a pypi dependency, preserved as-is from the original payload rather than redesigned."
         permanent: false
         disable_when_in_development: false
 
