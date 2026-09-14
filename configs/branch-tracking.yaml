@@ -110,9 +110,15 @@ target_branches:
         disable_when_in_development: true
 
       - name: _for_ci/format-upstream-residuals
+        enabled: false
+        tier: infrastructure
+        description: "SUPERSEDED 2026-09-14 by _for_ci/format-upstream-residuals-rederived. Disabled, not yet deleted, pending a green ci-base gate on the replacement. Its lp_executor.py content went stale and its merge reverted 627 live upstream lines, reinstating a parse_provider(..., default_trading_type=) call that upstream had deliberately removed; that TypeError failed 36 lp_executor tests, failed the ci-base pre-push test gate and aborted the rebuild before modular and bleeding-edge were reached."
+        permanent: false
+        disable_when_in_development: true
+      - name: _for_ci/format-upstream-residuals-rederived
         enabled: true
         tier: infrastructure
-        description: "Fix pre-existing ruff violations on upstream source that fail the ci-base 'Quality gates' pre-commit-on-diff step: vertex_constants.py duplicate POSITION_CHANGE_EVENT_TYPE (F811) + lp_executor.py missing magic trailing commas (~6 call sites). Commit e14a2c0 on development. Added 2026-06-20."
+        description: "Re-derived replacement for _for_ci/format-upstream-residuals (superseded 2026-09-14). Cut fresh from origin/development so it carries no stale ancestry. Keeps the two still-correct files and DROPS the stale one. KEPT: .pre-commit-config.yaml (ruff + ruff-format v0.15.7 replacing flake8/autopep8/isort/eslint, pre-commit-hooks v4.5.0, sub-packages/ excluded); vertex_constants.py duplicate POSITION_CHANGE_EVENT_TYPE removal, which is load-bearing because ci-base-seed-v1 carries 2 definitions and ruff selects F with the file inside its include glob. DROPPED: lp_executor.py, whose Jun-19 formatting snapshot discarded 627 live upstream lines; that formatting is redundant now that the rebuild runs its own py312 ruff --unsafe-fixes + format pass plus a final normalization after the _for_ci merges. Commit f4aded00, GPG-signed. Added 2026-09-14."
         permanent: false
         disable_when_in_development: true
 
