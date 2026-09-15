@@ -69,12 +69,7 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
-      - name: _for_ci/add-aiomqtt-dep
-        enabled: true
-        tier: infrastructure
-        description: "Realign ci-base with upstream PR #8293 (feat/mqtt-bridge-aiomqtt): add aiomqtt >=2.0.0 to [tool.pixi.dependencies], drop commlib-py. The frozen ci-base-seed-v1 pixi deps listed commlib-py (>=0.11,<0.13) and no aiomqtt even though the seed's remote_iface/mqtt.py is already the aiomqtt impl; _for_ci/strip-aiomqtt-seed (now disabled) was what converted it back to commlib. aiomqtt now on conda-forge (2.5.1). Branch based off the ci-base-seed-v1 tag so it is a clean single-hunk pixi-deps delta with no ancestry drag (does NOT re-introduce commlib code). Commit ee17100e, GPG-signed. Added 2026-07-06."
-        permanent: false
-        disable_when_in_development: false
+      # _for_ci/add-aiomqtt-dep: RETIRED 2026-09-15 — its real delta (pyproject.toml +1 line `aiomqtt = ">=2.0.0"`, pixi.lock 64 lines) was folded into ci-base seed v4 (ba2aed03). The branch had absorbed all 22 of seed v2's files, making it the owner of infra it never meant to touch; it aborted the rebuild with 8 logical conflicts. The seed owns pyproject.toml and pixi.lock, so any dependency-adding _for_ci branch is Class P — fold it in, never re-derive.
 
       - name: _for_ci/add-typer-dep
         enabled: true
