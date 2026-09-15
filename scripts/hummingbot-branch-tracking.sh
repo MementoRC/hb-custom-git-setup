@@ -682,7 +682,7 @@ pin_aiomqtt_transport() {
 ###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
-# Starts ci-base from the ci-base-seed-v1 tag (a fixed, GPG-signed snapshot
+# Starts ci-base from the ci-base-seed-v3 tag (a fixed, GPG-signed snapshot
 # that embeds the pixi-ci-migration + conda-removal + pytest-asyncio foundation),
 # then merges origin/development on top.
 #
@@ -695,7 +695,7 @@ build_ci_base_from_seed() {
 
     # Prerequisite: seed tag must exist (fetch tags from origin first)
     git fetch origin --tags >/dev/null 2>&1 || true
-    local seed_tag="ci-base-seed-v1"
+    local seed_tag="ci-base-seed-v3"
     local seed_sha
     seed_sha=$(git rev-parse --verify "refs/tags/$seed_tag" 2>/dev/null) || {
         log_error "FATAL: tag $seed_tag not found — create it first (see ci-base-clean-rebuild-plan.md Prerequisites)"

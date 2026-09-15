@@ -45,12 +45,7 @@ target_branches:
       # _for_ci/bump-setup-pixi-action: RETIRED 2026-06-14 — setup-pixi v0.9.6 merged into ci-base; branch fully promoted
       # _for_ci/isort-lighter-hyperliquid-cleanup: RETIRED 2026-06-19 — stale isort tooling now aborts every rebuild; fully absorbed into ci-base
 
-      - name: _for_ci/re-remove-conda-setup
-        enabled: true
-        tier: infrastructure
-        description: "Re-delete conda setup artifacts (Makefile/install/setup/*.yml) restored into ci-base by the 2026-06-15 dev-sync. Tracked branch re-applies the deletion every rebuild (merged after dev-sync) so it survives reseeds — robust replacement for the neutralized remove-conda-setup one-time promotion (447d577d). Added 2026-06-18."
-        permanent: false
-        disable_when_in_development: true
+      # _for_ci/re-remove-conda-setup: RETIRED 2026-09-15 — its 5 conda deletions (Makefile, install, setup/environment.yml, setup/environment_dydx.yml, setup/pip_packages.txt) were folded into ci-base seed v3 (188ed6b4), recorded against current development so the seed+development merge no longer resurrects them. Branch had gone stale and aborted the rebuild on the first _for_ci merge with an unresolvable modify/delete.
 
       - name: _for_ci/ignore-rust-artifacts
         enabled: true
