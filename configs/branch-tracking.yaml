@@ -265,6 +265,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/avellaneda-test-timeout
+        enabled: true
+        tier: infrastructure
+        description: "Raise AvellanedaMarketMakingUnitTests timeout to 120s; test_apply_order_optimization timed out under load in the ci-base pytest gate (run 20260916_114531). Added 2026-09-16."
+        permanent: false
+        disable_when_in_development: true
+
       # _for_ci/import-linter-rederived: RETIRED 2026-09-15 — real delta (.importlinter, 242 lines, plus pyproject.toml +4 for the dev pypi-dependency and the lint-boundaries task) folded into ci-base seed v5 (3272d52a). Same seed-absorption pathology.
 
       - name: _for_ci/test-coverage
