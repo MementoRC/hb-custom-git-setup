@@ -71,12 +71,7 @@ target_branches:
 
       # _for_ci/add-aiomqtt-dep: RETIRED 2026-09-15 — its real delta (pyproject.toml +1 line `aiomqtt = ">=2.0.0"`, pixi.lock 64 lines) was folded into ci-base seed v4 (ba2aed03). The branch had absorbed all 22 of seed v2's files, making it the owner of infra it never meant to touch; it aborted the rebuild with 8 logical conflicts. The seed owns pyproject.toml and pixi.lock, so any dependency-adding _for_ci branch is Class P — fold it in, never re-derive.
 
-      - name: _for_ci/add-typer-dep
-        enabled: true
-        tier: infrastructure
-        description: "Add typer >=0.9.0 to [tool.pixi.dependencies]. setup.py lists typer in install_requires but pixi install-dev runs `pip install --no-deps -e .`, so it never installs into the pixi env; 14 hummingbot/cli/* source files import typer and 17 CLI test files failed collection with ModuleNotFoundError at the ci-base pre-push test gate. Branch based off the ci-base-seed-v1 tag as a clean single-hunk pixi-deps delta with no ancestry drag (mirrors _for_ci/add-aiomqtt-dep). GPG-signed. Added 2026-07-22."
-        permanent: false
-        disable_when_in_development: false
+      # _for_ci/add-typer-dep: RETIRED 2026-09-15 — real delta (pyproject.toml +1, `typer = ">=0.9.0"`) folded into ci-base seed v5 (3272d52a). Had absorbed all 22 seed files and aborted a rebuild with 8 logical conflicts. The seed owns pyproject.toml, so a dependency-adding _for_ci branch is Class P — fold, never re-derive.
 
       - name: _for_ci/lint-residual
         enabled: true
@@ -247,12 +242,7 @@ target_branches:
         disable_when_in_development: true
         parent: _for_ci/expand-ruff-coverage
 
-      - name: _for_ci/add-pytest-xdist-dep
-        enabled: true
-        tier: infrastructure
-        description: "Add pytest-xdist>=3,<4 (conda-forge) to [tool.pixi.feature.ci.dependencies] so the pre-push test gate can run pytest -n for parallelism; pixi.lock re-solved. Branch has ci-base ancestry (the pixi ci-env config lives in ci-base, not development). Commit 6901a1f1, GPG-signed. Added 2026-07-23. NOTE: this only makes xdist AVAILABLE; the gate -n wiring is a separate follow-up gated on coverage-under-xdist handling + fixing 2 xdist-unsafe tests (WebAssistantsFactoryTest event-loop-in-setUpClass)."
-        permanent: true
-        disable_when_in_development: false
+      # _for_ci/add-pytest-xdist-dep: RETIRED 2026-09-15 — real delta (pyproject.toml +1, `pytest-xdist = ">=3,<4"`) folded into ci-base seed v5 (3272d52a). Same seed-absorption pathology as add-typer-dep; would have aborted the next rebuild in merge order.
 
       - name: _for_ci/fix-foxbit-typing-imports
         enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
@@ -275,12 +265,7 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/import-linter-rederived
-        enabled: true  # RE-DERIVED 2026-09-13, replaces _for_ci/import-linter (retired same day, three-part). WATCH: the merge verdict line should now report ZERO files reverting live upstream content.
-        tier: infrastructure
-        description: "RE-DERIVED 2026-09-13 from _for_ci/import-linter (tip f3f0c50a), which had drifted into a whole-tree stale snapshot - 1163 files changed vs origin/development, 80 reverting live upstream content on every merge. CAUSALLY PROVEN to produce both remaining ci-base gate collection errors on run 20260913_202845: gateway_http_client.py lost _body/_query and gateway_utils.py lost is_slippage_failure (verified ABSENT at the old tip, PRESENT on origin/development). Genuine payload is only .importlinter (242 lines, contracts enforcing hb_compat/ across 14 sub-packages, accumulated over 6 commits ending at the async_utils.hb_compat.common -> logger carve-out) plus 4 lines of pyproject.toml wiring (import-linter dep + lint-boundaries task); both reproduced verbatim, no source file touched. Based off ci-base-seed-v1 rather than origin/development, per the _for_ci/add-aiomqtt-dep precedent: development's pyproject.toml is a pre-pixi file with no [tool.pixi.*] tables so the wiring has nowhere to land there, and the frozen tag cannot re-stale the branch on the next rebuild. Commit 760ce8b2, GPG-verified. NOTE: import-linter is declared as a pypi dependency, preserved as-is from the original payload rather than redesigned."
-        permanent: false
-        disable_when_in_development: false
+      # _for_ci/import-linter-rederived: RETIRED 2026-09-15 — real delta (.importlinter, 242 lines, plus pyproject.toml +4 for the dev pypi-dependency and the lint-boundaries task) folded into ci-base seed v5 (3272d52a). Same seed-absorption pathology.
 
       - name: _for_ci/test-coverage
         enabled: true
@@ -366,12 +351,7 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/purge-seed-residue
-        enabled: true
-        tier: infrastructure
-        description: "Deletes ci-base seed residue that upstream has already removed: gateway_{lp,pool,swap,token} commands + lp_command_utils, and the ascend_ex/cube/vertex connectors along with their tests/rate-sources/candles. Rooted at the ci-base-seed-v1 tag so it cannot go stale. Every path verified absent from origin/development. 78 files, deletions only. Added 2026-09-05."
-        permanent: false
-        disable_when_in_development: false
+      # _for_ci/purge-seed-residue: RETIRED 2026-09-15 — REDUNDANT, not folded. It deletes 39 paths (ascend_ex, cube, vertex, gateway_lp_command.py, lp_command_utils.py) that upstream development has already deleted itself, so a seed cut from current development never had them. Also accounts for the old "half-deleted connector" residue.
 
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
