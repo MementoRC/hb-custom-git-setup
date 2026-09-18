@@ -497,6 +497,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/executor-factory-wiring
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Wire ExecutorFactory registration + mixins for Position/DCA/LP executors; completes the unfinished refactor from modular-regen 647f4148 that left 24 tests failing on the modular gate. Added 2026-09-18."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
