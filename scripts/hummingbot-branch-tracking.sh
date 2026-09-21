@@ -3012,6 +3012,19 @@ main() {
 
   done < <(get_target_branches)
 
+  # Ensure HEAD is on bleeding-edge before the pin + final format pass.
+  # get_target_branches() yields target keys alphabetically, so the loop above
+  # processes bleeding-edge FIRST and modular LAST, leaving HEAD on modular.
+  # Neither pin_aiomqtt_transport (its tier argument is log/commit-message text
+  # only; its sole checkout is the pathspec form, which does not move HEAD) nor
+  # the format pass below checks out a branch. Without this checkout both
+  # landed on modular, so bleeding-edge kept the unsorted imports that its own
+  # I001 quality gate then rejected — blocking every bleeding-edge push.
+  git checkout "$FEATURE_BRANCH" >& /dev/null || {
+      log_error "could not checkout $FEATURE_BRANCH for pin + final format pass"
+      exit 1
+  }
+
   # Pin aiomqtt transport after all _for_bleed/* branch merges are done,
   # before the final format pass. This overrides any commlib version of mqtt.py
   # dragged in by branch ancestry into bleeding-edge.
@@ -3019,33 +3032,34 @@ main() {
 
   # Final format pass — merges can produce unformatted results even when
   # individual branches are clean (e.g. merge conflict resolution artifacts
-  # or content from different formatting epochs).
-  if [ "$REBUILD_MODE" = "true" ]; then
-      local ruff_cmd=""
-      if command -v ruff &> /dev/null; then
-          ruff_cmd="ruff"
-      elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
-          ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
-      fi
-      local isort_cmd=""
-      if command -v isort &> /dev/null; then
-          isort_cmd="isort"
-      elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
-          isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
-      fi
-      if [ -n "$ruff_cmd" ]; then
-          $ruff_cmd format hummingbot test controllers scripts >& /dev/null
-          $ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
-      fi
-      if [ -n "$isort_cmd" ]; then
-          $isort_cmd hummingbot test controllers scripts >& /dev/null
-      fi
-      if [ -n "$ruff_cmd" ] || [ -n "$isort_cmd" ]; then
-          if ! git diff --quiet; then
-              git add -A -- . ':!sub-packages'
-              git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format + lint fix + isort pass after rebuild" >& /dev/null
-              log_step "Applied final format pass"
-          fi
+  # or content from different formatting epochs). This runs on cron incremental
+  # syncs as well as --rebuild: cron merges _for_bleed/* the same way and can
+  # produce the same conflict-resolution artifacts, and without a format pass
+  # it has no way to self-heal them before the gate rejects them.
+  local ruff_cmd=""
+  if command -v ruff &> /dev/null; then
+      ruff_cmd="ruff"
+  elif [ -x "$REPO_PATH/.pixi/envs/default/bin/ruff" ]; then
+      ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
+  fi
+  local isort_cmd=""
+  if command -v isort &> /dev/null; then
+      isort_cmd="isort"
+  elif [ -x "$REPO_PATH/.pixi/envs/default/bin/isort" ]; then
+      isort_cmd="$REPO_PATH/.pixi/envs/default/bin/isort"
+  fi
+  if [ -n "$ruff_cmd" ]; then
+      $ruff_cmd format hummingbot test controllers scripts >& /dev/null
+      $ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
+  fi
+  if [ -n "$isort_cmd" ]; then
+      $isort_cmd hummingbot test controllers scripts >& /dev/null
+  fi
+  if [ -n "$ruff_cmd" ] || [ -n "$isort_cmd" ]; then
+      if ! git diff --quiet; then
+          git add -A -- . ':!sub-packages'
+          git -c commit.gpgsign=false commit --no-verify -m "style: final ruff format + lint fix + isort pass after rebuild" >& /dev/null
+          log_step "Applied final format pass"
       fi
   fi
 
