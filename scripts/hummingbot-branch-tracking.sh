@@ -3071,7 +3071,27 @@ main() {
   # bleeding-edge's empty "Initialize" commit and silently shipped the tier as
   # modular + _for_accel/* with none of the _for_bleed/* features.
   # ----------------------------------------------------------------------------
-  if [ "$REBUILD_MODE" = "true" ] && yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+  # The guard here used to be REBUILD_MODE-only, so a cron run never re-cut the
+  # tier at all — while the pre-push gate loop further below gates and pushes
+  # `accelerated` on EVERY run. That combination gates a STALE branch as green:
+  # on 2026-09-21 accelerated still sat on the previous run's bleeding-edge tip
+  # and failed a foxbit test that bleeding-edge itself had already fixed.
+  # Re-cut when the tier is declared AND either a rebuild was requested or the
+  # branch is genuinely behind the current bleeding-edge tip. The ancestry test
+  # keeps cron cheap: the rust/cython re-cut only runs when accelerated is
+  # actually behind, not on every tick.
+  local _accel_recut=false
+  if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+      if [ "$REBUILD_MODE" = "true" ]; then
+          _accel_recut=true
+      elif ! git rev-parse --verify --quiet accelerated >/dev/null 2>&1; then
+          _accel_recut=true
+      elif ! git merge-base --is-ancestor "$FEATURE_BRANCH" accelerated >/dev/null 2>&1; then
+          _accel_recut=true
+      fi
+  fi
+
+  if [ "$_accel_recut" = "true" ]; then
       sync_accelerated_branch "accelerated" "$FEATURE_BRANCH" || {
           log_error "accelerated branch init failed — rebuild aborted"
           exit 1
