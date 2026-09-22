@@ -365,6 +365,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/kraken-create-order-test-timeout
+        enabled: true
+        tier: infrastructure
+        description: "Raise the six wait_for(request_sent_event.wait()) deadlines in AbstractExchangeConnectorTests from 1s to 10s. KrakenExchangeTests::test_create_order_fails_and_raises_failure_event failed the accelerated push gate on run 20260921_030001 (2 failed, 7017 passed, 1341 skipped) with asyncio TimeoutError, though the gate log shows the mocked 400 correctly producing OSError and the order reaching OrderState.FAILED just past the 1s deadline. The test passes on bleeding-edge both before and after accelerated's cut point and passed again on accelerated in run 20260922_030001, so this is a load/scheduling margin on the native-extension tier, not an order-handling regression. These waits bound a mocked in-process callback, so the value is an upper bound rather than an assertion; 10s still fails fast on a genuine hang. Note 16 connector test suites inherit these. Deliberately unchanged: the timeout=3 wait at :802 and the two _cancel_lost_orders() waits at :1695/:1745, which bound real coroutine execution. Branch based off origin/development, commit 1faae0c3, GPG-signed. Added 2026-09-22."
+        permanent: false
+        disable_when_in_development: true
+
       # _for_ci/purge-seed-residue: RETIRED 2026-09-15 — REDUNDANT, not folded. It deletes 39 paths (ascend_ex, cube, vertex, gateway_lp_command.py, lp_command_utils.py) that upstream development has already deleted itself, so a seed cut from current development never had them. Also accounts for the old "half-deleted connector" residue.
 
   modular:
