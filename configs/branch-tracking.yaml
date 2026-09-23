@@ -302,12 +302,7 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
-      - name: _for_ci/fix-hyperliquid-rate-flaky
-        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
-        tier: infrastructure
-        description: "Fix flaky test_get_hyperliquid_prices_handles_unknown_symbols: get_prices' module-level async_ttl_cache keyed on str((self,...)) suffers stale cache hits across test instances via Python heap-address reuse, returning a prior test's empty result. Adds get_prices.cache_clear() after each instantiation in the 5 async tests that lacked it (mirrors the one test that already had it). Fixes the 1/7403 intermittent failure that reddens kraken-new-order-types and others. ci-base ancestry. Commit 1d29ca4a. Added 2026-07-05."
-        permanent: false
-        disable_when_in_development: true
+      # _for_ci/fix-hyperliquid-rate-flaky: RETIRED 2026-09-23 — re-derived onto development as _for_ci/fix-hyperliquid-rate-flaky-rederived (commit 467bee28). Original carried stale ci-base ancestry; payload identical (diff hunk headers byte-identical to 1d29ca4a).
 
       - name: _for_ci/fix-evedex-rate-flaky
         enabled: true
@@ -373,6 +368,13 @@ target_branches:
         disable_when_in_development: true
 
       # _for_ci/purge-seed-residue: RETIRED 2026-09-15 — REDUNDANT, not folded. It deletes 39 paths (ascend_ex, cube, vertex, gateway_lp_command.py, lp_command_utils.py) that upstream development has already deleted itself, so a seed cut from current development never had them. Also accounts for the old "half-deleted connector" residue.
+
+      - name: _for_ci/fix-hyperliquid-rate-flaky-rederived
+        enabled: true
+        tier: infrastructure
+        description: "Re-derivation of 1d29ca4a onto development, replacing _for_ci/fix-hyperliquid-rate-flaky which was disabled 2026-09-05 for stale ci-base ancestry (not because the fix was wrong). Fixes flaky test_get_hyperliquid_prices_handles_unknown_symbols: get_prices is wrapped by a module-level async_ttl_cache keyed on str((self, ...)), and Python heap-address reuse lets a new HyperliquidPerpetualRateSource() hit a prior test's stale empty result. Adds rate_source.get_prices.cache_clear() after instantiation in the 5 async tests that lacked it, mirroring the one in test_get_hyperliquid_prices_exception_handling. Scope: 8 instantiation sites exist but only 6 tests call get_prices; test_ensure_exchange_creates_connector and test_name_property are deliberately skipped as no-ops. Was the sole failure blocking the accelerated tier on rebuild 20260922_214827 (1 failed, 7018 passed). Underlying cache-key defect not addressed here. Branch based off origin/development, commit 467bee28, GPG-signed. Added 2026-09-23."
+        permanent: false
+        disable_when_in_development: true
 
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
