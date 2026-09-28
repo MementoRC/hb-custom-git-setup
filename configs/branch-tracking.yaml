@@ -700,6 +700,15 @@ target_branches:
       # compile-gate of scripts/hummingbot-branch-tracking.sh, not via a tracked branch — the
       # augmented source arrives through sub-package auto-track. No _for_accel branch is needed.
 
+  overlay:
+    # Pure-Python integration tier (design v2, 2026-09-27). Cut FRESH from
+    # origin/development every cycle: no seed, no py312 transform, no format
+    # sweep. Carries only _for_overlay/* delta branches. gate_mode: report
+    # means the pytest gate logs failures but never blocks or pushes.
+    base_branch: development
+    gate_mode: report
+    tracked_branches: []
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
