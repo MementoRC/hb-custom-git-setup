@@ -1448,6 +1448,37 @@ sync_accelerated_branch() {
 }
 
 ###############################################################################
+# Overlay Branch Sync
+# -------------------
+# PURE-PYTHON tier cut FRESH from origin/<base> every cycle — no frozen seed,
+# no py312 transform, no repo-wide format sweep. It carries only its
+# _for_overlay/* delta branches, merged by the generic sync_branch() loop in
+# main() (see the "Build the overlay tier" block there). Unlike accelerated it
+# is NOT compiled and NOT pushed: its gate is report-only.
+###############################################################################
+sync_overlay_branch() {
+    # Pure-Python overlay tier: rebuilt from upstream every cycle. No seed,
+    # no transform. Submodules are re-synced after the delta merges so the
+    # sub-packages/ gitlinks brought by _for_overlay/subpackage-wiring exist.
+    local overlay_branch="$1"
+    local base_ref="origin/$2"
+
+    log_operation "Create $overlay_branch from $base_ref"
+    git_quiet fetch origin "$2"
+    git_quiet checkout --detach "$base_ref"
+    git_quiet branch -D "$overlay_branch" >& /dev/null
+    git_quiet checkout -b "$overlay_branch"
+
+    git -c commit.gpgsign=false commit --allow-empty --no-verify -m "Initialize $overlay_branch from $base_ref" >& /dev/null || {
+        log_error "Failed to initialize $overlay_branch branch"
+        return 1
+    }
+
+    log_result true "$overlay_branch created from $base_ref"
+    return 0
+}
+
+###############################################################################
 # Modular Tracked-Branch Merge Pass
 # ----------------------------------
 # Merges branches listed under target_branches.modular.tracked_branches into
@@ -2681,14 +2712,21 @@ gate_and_push_branch() {
       _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
       if [ -n "$_changed" ]; then
           if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1; then
-              if ! git -C "$REPO_PATH" diff --quiet; then
-                  git -C "$REPO_PATH" add -A -- . ':!sub-packages'
-                  git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
-                      -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
-              fi
-              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
-              if [ -n "$_changed" ]; then
-                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
+              # The lint/format autofix step is SKIPPED for the overlay tier: that tier
+              # is pure upstream code cut fresh from development every cycle, so an
+              # autofix commit here would rewrite upstream files and make every overlay
+              # diff a formatting diff. Overlay is report-only and never pushed, so
+              # there is nothing to protect by auto-fixing it.
+              if [[ "$_gate_branch" != "overlay" ]]; then
+                  if ! git -C "$REPO_PATH" diff --quiet; then
+                      git -C "$REPO_PATH" add -A -- . ':!sub-packages'
+                      git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
+                          -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
+                  fi
+                  _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+                  if [ -n "$_changed" ]; then
+                      ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
+                  fi
               fi
           fi
       fi
@@ -2990,7 +3028,12 @@ main() {
       # bleeding-edge tip that has not yet received its _for_bleed/* features.
       # The tier is built after this loop instead (see "Build the accelerated
       # tier" below).
-      if [ "$target_branch" = "ci-base" ] || [ "$target_branch" = "accelerated" ]; then
+      #
+      # overlay is skipped here for the same reason: the branch does not exist
+      # yet at this point (it is re-cut from origin/development further below),
+      # so merging _for_overlay/* here would land them on LAST run's overlay tip
+      # — which the re-cut then throws away. See "Build the overlay tier" below.
+      if [ "$target_branch" = "ci-base" ] || [ "$target_branch" = "accelerated" ] || [ "$target_branch" = "overlay" ]; then
           continue
       fi
 
@@ -3136,6 +3179,68 @@ main() {
           exit 1
       fi
       log_step "Conflict-marker scan: clean"
+  fi
+
+  # ----------------------------------------------------------------------------
+  # Build the overlay tier: a PURE-PYTHON tier cut FRESH from origin/development
+  # every cycle. No frozen seed, no py312 transform, no repo-wide format sweep —
+  # it carries ONLY its _for_overlay/* delta branches on top of the upstream tip.
+  # Modeled on the accelerated block above, with four deliberate differences:
+  #   1. the re-cut is UNCONDITIONAL on every run (tracking the upstream tip IS
+  #      the tier's purpose, so there is no merge-base staleness test to skip it);
+  #   2. submodules are re-synced after the delta merges, so sub-packages/ gitlinks
+  #      brought in by _for_overlay/* actually exist on disk for the gate;
+  #   3. gate_mode: report — run_tests() result is LOGGED only. The tier is never
+  #      pushed and a failure never aborts the run (hence it is absent from
+  #      _gate_branches / gate_and_push_branch below);
+  #   4. NO compile gate (no cargo build, no build_ext): pure Python by definition.
+  # Placed after the conflict-marker scan (so that scan still runs against the
+  # accelerated tree, as it did before this tier existed) and BEFORE the pre-push
+  # gate loop, which checks out each gated tier in turn and therefore still leaves
+  # HEAD exactly where it did before — on the last gated tier.
+  # ----------------------------------------------------------------------------
+  if yq -e '.target_branches | has("overlay")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
+      local _overlay_base
+      _overlay_base="$(yq -r '.target_branches.overlay.base_branch // "development"' "$BRANCH_CONFIG" 2>/dev/null)"
+      if [ -z "$_overlay_base" ] || [ "$_overlay_base" = "null" ]; then
+          _overlay_base="$DEVELOPMENT_BRANCH"
+      fi
+
+      if sync_overlay_branch "overlay" "$_overlay_base"; then
+          log_step "$(colorize "$BLUE" "Processing target branch: overlay")"
+          local _overlay_indent=$INDENT_LEVEL
+          local _overlay_branch
+          while IFS= read -r _overlay_branch; do
+              [ -z "$_overlay_branch" ] && continue
+              if [ "$(is_branch_enabled "overlay" "$_overlay_branch")" = "true" ]; then
+                  INDENT_LEVEL=$_overlay_indent
+                  sync_branch "overlay" "$_overlay_branch"
+              fi
+          done < <(get_tracked_branches_sorted "overlay")
+          INDENT_LEVEL=$_overlay_indent
+
+          # The delta merges above can add sub-packages/ gitlinks that were never
+          # checked out on this working tree; without this the gate would test
+          # whatever the previous tier left on disk (same reasoning as the gate's
+          # own submodule sync).
+          if ! { git submodule sync --recursive && git submodule update --init --recursive; } >& "$RUN_LOG_DIR/overlay_submodule.log"; then
+              log_error "overlay: submodule sync/update failed — see $RUN_LOG_DIR/overlay_submodule.log (continuing; overlay is report-only)"
+          fi
+
+          local gate_mode
+          gate_mode="$(yq -r '.target_branches.overlay.gate_mode // "block"' "$BRANCH_CONFIG" 2>/dev/null)"
+          if [ "$gate_mode" = "report" ]; then
+              if run_tests "overlay"; then
+                  log_result true "overlay tests: pass (report-only — overlay is never pushed)"
+              else
+                  log_result false "overlay tests: FAIL (report-only — not pushed, run NOT aborted)"
+              fi
+          else
+              log_step "overlay gate_mode=$gate_mode — only 'report' is implemented for this tier; skipping overlay gate"
+          fi
+      else
+          log_error "overlay branch init failed — overlay tier skipped (report-only tier never aborts the run)"
+      fi
   fi
 
   log_step "Branch tracking completed successfully!"
