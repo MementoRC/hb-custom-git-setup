@@ -707,7 +707,13 @@ target_branches:
     # means the pytest gate logs failures but never blocks or pushes.
     base_branch: development
     gate_mode: report
-    tracked_branches: []
+    tracked_branches:
+      - name: _for_overlay/infra
+        enabled: true
+        tier: infrastructure
+        description: "Overlay infra layer: the 19 non-.py config files (pixi, pyproject, ruff, pre-commit, CI, importlinter) taken from modular"
+        permanent: true
+        disable_when_in_development: false
 
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
