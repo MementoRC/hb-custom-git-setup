@@ -2717,16 +2717,19 @@ gate_and_push_branch() {
               # autofix commit here would rewrite upstream files and make every overlay
               # diff a formatting diff. Overlay is report-only and never pushed, so
               # there is nothing to protect by auto-fixing it.
+              # NOTE: the failure re-check below still runs for overlay — only the
+              # autofix commit itself is skipped; a real quality failure must still
+              # set _q_ok=false rather than being silently swallowed.
               if [[ "$_gate_branch" != "overlay" ]]; then
                   if ! git -C "$REPO_PATH" diff --quiet; then
                       git -C "$REPO_PATH" add -A -- . ':!sub-packages'
                       git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
                           -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
                   fi
-                  _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
-                  if [ -n "$_changed" ]; then
-                      ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
-                  fi
+              fi
+              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+              if [ -n "$_changed" ]; then
+                  ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
               fi
           fi
       fi
@@ -3194,6 +3197,9 @@ main() {
   #      pushed and a failure never aborts the run (hence it is absent from
   #      _gate_branches / gate_and_push_branch below);
   #   4. NO compile gate (no cargo build, no build_ext): pure Python by definition.
+  # Because overlay is intentionally absent from _gate_branches, gate_and_push_branch()
+  # is never invoked for it — the `_gate_branch != overlay` guard inside that function
+  # is defensive only, in case overlay is ever added there in the future.
   # Placed after the conflict-marker scan (so that scan still runs against the
   # accelerated tree, as it did before this tier existed) and BEFORE the pre-push
   # gate loop, which checks out each gated tier in turn and therefore still leaves
