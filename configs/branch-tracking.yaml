@@ -715,6 +715,14 @@ target_branches:
         permanent: true
         disable_when_in_development: false
 
+      - name: _for_overlay/subpackage-wiring
+        enabled: true
+        tier: wiring
+        description: "Overlay sub-package wiring: .gitmodules, sub-packages gitlinks, check_subpackage_compat.py, api_throttler shim (dead siblings removed)"
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/infra
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
