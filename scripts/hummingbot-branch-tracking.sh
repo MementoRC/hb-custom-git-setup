@@ -55,6 +55,26 @@ FAILED_MERGES=()
 ATTEMPTED_MERGES=0
 
 ###############################################################################
+# Parent-failure cascade tracking
+# ----------------------------------
+# get_branch_parent()/get_tracked_branches_sorted() only ORDER merges by
+# declared `parent:`; nothing previously stopped a child branch from being
+# merged/tested when its parent failed/reverted/was skipped this cycle
+# (observed cron_20260930_121432.log: _for_overlay/subpackage-wiring merged
+# and tested on the overlay tier without its reverted parent _for_overlay/infra).
+# NOT_LANDED_BRANCHES holds space-delimited "<target>::<branch>" tokens for
+# branches that did NOT land THIS cycle in a given target's tracked_branches
+# list (failed merge/checkout/test-revert, or "does not exist"). Scoped by
+# target so same-named branches across tiers never collide. A parent that is
+# empty, never attempted, disabled (never looped over), not tracked under this
+# target, or landed successfully ("already up to date" or merged) is simply
+# absent from this set and therefore never causes a skip. See
+# mark_branch_not_landed()/skip_if_parent_failed() below (defined near
+# get_branch_parent) for the shared helper used by every tier's merge loop.
+###############################################################################
+NOT_LANDED_BRANCHES=""
+
+###############################################################################
 # Pytest gate exclusion set (global — NOT local to main())
 # -----------------------------------------------------------------------------
 # Both run_tests() (the merge-time selective/escape-hatch pytest runs) and
@@ -1501,12 +1521,21 @@ merge_for_modular_branches() {
 
     while IFS= read -r branch; do
         [ -z "$branch" ] && continue
+
+        if skip_if_parent_failed "modular" "$branch"; then
+            log_warning "Skipping $branch: parent $(get_branch_parent "modular" "$branch") did not land this cycle"
+            FAILED_MERGES+=("$branch -> $modular_branch")
+            FAILED_MERGES+=("  skipped: parent did not land this cycle")
+            continue
+        fi
+
         log_operation "Merging $branch"
 
         local location
         location=$(branch_exists "$branch")
         if [ "$location" = "none" ]; then
             log_error "Modular branch $branch not found — skipping"
+            mark_branch_not_landed "modular" "$branch"
             continue
         fi
         ATTEMPTED_MERGES=$((ATTEMPTED_MERGES + 1))
@@ -1552,6 +1581,7 @@ merge_for_modular_branches() {
                 log_merge_failure "$merge_log" "$conflict_files"
                 FAILED_MERGES+=("$branch -> $modular_branch")
                 FAILED_MERGES+=("  $_reason")
+                mark_branch_not_landed "modular" "$branch"
                 rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 return 1
@@ -1605,6 +1635,7 @@ merge_for_modular_branches() {
                     log_merge_failure "$merge_log" "$conflict_files"
                     FAILED_MERGES+=("$branch -> $modular_branch")
                     FAILED_MERGES+=("  commit failed after format-only conflict resolution")
+                    mark_branch_not_landed "modular" "$branch"
                     rm -f "$merge_log"
                     git merge --abort >& /dev/null
                     return 1
@@ -1787,12 +1818,21 @@ merge_for_ci_branches() {
 
     while IFS= read -r branch; do
         [ -z "$branch" ] && continue
+
+        if skip_if_parent_failed "$base_branch" "$branch"; then
+            log_warning "Skipping $branch: parent $(get_branch_parent "$base_branch" "$branch") did not land this cycle"
+            FAILED_MERGES+=("$branch -> $base_branch")
+            FAILED_MERGES+=("  skipped: parent did not land this cycle")
+            continue
+        fi
+
         log_operation "Merging $branch"
 
         local location
         location=$(branch_exists "$branch")
         if [ "$location" = "none" ]; then
             log_error "_for_ci branch $branch not found — skipping"
+            mark_branch_not_landed "$base_branch" "$branch"
             continue
         fi
         ATTEMPTED_MERGES=$((ATTEMPTED_MERGES + 1))
@@ -1838,6 +1878,7 @@ merge_for_ci_branches() {
                 log_merge_failure "$merge_log" "$conflict_files"
                 FAILED_MERGES+=("$branch -> $base_branch")
                 FAILED_MERGES+=("  $_reason")
+                mark_branch_not_landed "$base_branch" "$branch"
                 rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 return 1
@@ -1938,6 +1979,7 @@ merge_for_ci_branches() {
                 log_merge_failure "$merge_log" "$conflict_files"
                 FAILED_MERGES+=("$branch -> $base_branch")
                 FAILED_MERGES+=("  format-only conflict resolution left unresolved content")
+                mark_branch_not_landed "$base_branch" "$branch"
                 rm -f "$merge_log"
                 git merge --abort >& /dev/null
                 return 1
@@ -1962,6 +2004,7 @@ merge_for_ci_branches() {
                     log_merge_failure "$merge_log" "$conflict_files"
                     FAILED_MERGES+=("$branch -> $base_branch")
                     FAILED_MERGES+=("  commit failed after format-only conflict resolution")
+                    mark_branch_not_landed "$base_branch" "$branch"
                     rm -f "$merge_log"
                     git merge --abort >& /dev/null
                     return 1
@@ -2537,6 +2580,39 @@ get_branch_parent() {
     fi
 }
 
+# Records that $branch under $target did NOT land this cycle (see
+# NOT_LANDED_BRANCHES docstring above main()'s declaration). Idempotent-ish:
+# duplicate tokens are harmless since branch_did_not_land() only checks
+# presence via a substring match.
+mark_branch_not_landed() {
+    local target="$1" branch="$2"
+    NOT_LANDED_BRANCHES="${NOT_LANDED_BRANCHES} ${target}::${branch} "
+}
+
+# True (0) when $branch under $target is recorded as not-landed this cycle.
+branch_did_not_land() {
+    local target="$1" branch="$2"
+    case " $NOT_LANDED_BRANCHES " in
+        *" ${target}::${branch} "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# skip_if_parent_failed <target> <branch>
+# Returns 0 (skip) when $branch declares a parent under $target that did NOT
+# land this cycle, and also marks $branch itself as not-landed so
+# grandchildren cascade correctly. Returns 1 (do not skip) when there is no
+# declared parent, or the parent is not recorded as not-landed (i.e. it landed,
+# was never attempted, is disabled, or is not tracked under this target).
+skip_if_parent_failed() {
+    local target="$1" branch="$2" parent
+    parent="$(get_branch_parent "$target" "$branch")"
+    [ -z "$parent" ] && return 1
+    branch_did_not_land "$target" "$parent" || return 1
+    mark_branch_not_landed "$target" "$branch"
+    return 0
+}
+
 get_branch_tier() {
     local target="$1"
     local branch="$2"
@@ -3050,8 +3126,14 @@ main() {
           enabled="$(is_branch_enabled "$target_branch" "$branch")"
 
           if [ "$enabled" = "true" ]; then
+              if skip_if_parent_failed "$target_branch" "$branch"; then
+                  log_warning "Skipping $branch: parent $(get_branch_parent "$target_branch" "$branch") did not land this cycle"
+                  FAILED_MERGES+=("$branch -> $target_branch")
+                  FAILED_MERGES+=("  skipped: parent did not land this cycle")
+                  continue
+              fi
               INDENT_LEVEL=$loop_indent  # Reset indent before each branch
-              sync_branch "$target_branch" "$branch"
+              sync_branch "$target_branch" "$branch" || mark_branch_not_landed "$target_branch" "$branch"
           fi
       done < <(get_tracked_branches_sorted "$target_branch")
       INDENT_LEVEL=$loop_indent
@@ -3151,8 +3233,14 @@ main() {
       while IFS= read -r _accel_branch; do
           [ -z "$_accel_branch" ] && continue
           if [ "$(is_branch_enabled "accelerated" "$_accel_branch")" = "true" ]; then
+              if skip_if_parent_failed "accelerated" "$_accel_branch"; then
+                  log_warning "Skipping $_accel_branch: parent $(get_branch_parent "accelerated" "$_accel_branch") did not land this cycle"
+                  FAILED_MERGES+=("$_accel_branch -> accelerated")
+                  FAILED_MERGES+=("  skipped: parent did not land this cycle")
+                  continue
+              fi
               INDENT_LEVEL=$_accel_indent
-              sync_branch "accelerated" "$_accel_branch"
+              sync_branch "accelerated" "$_accel_branch" || mark_branch_not_landed "accelerated" "$_accel_branch"
           fi
       done < <(get_tracked_branches_sorted "accelerated")
       INDENT_LEVEL=$_accel_indent
@@ -3224,8 +3312,14 @@ main() {
           while IFS= read -r _overlay_branch; do
               [ -z "$_overlay_branch" ] && continue
               if [ "$(is_branch_enabled "overlay" "$_overlay_branch")" = "true" ]; then
+                  if skip_if_parent_failed "overlay" "$_overlay_branch"; then
+                      log_warning "Skipping $_overlay_branch: parent $(get_branch_parent "overlay" "$_overlay_branch") did not land this cycle"
+                      FAILED_MERGES+=("$_overlay_branch -> overlay")
+                      FAILED_MERGES+=("  skipped: parent did not land this cycle")
+                      continue
+                  fi
                   INDENT_LEVEL=$_overlay_indent
-                  sync_branch "overlay" "$_overlay_branch"
+                  sync_branch "overlay" "$_overlay_branch" || mark_branch_not_landed "overlay" "$_overlay_branch"
               fi
           done < <(get_tracked_branches_sorted "overlay")
           INDENT_LEVEL=$_overlay_indent
