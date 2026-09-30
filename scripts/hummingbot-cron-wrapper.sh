@@ -37,6 +37,32 @@ ln -sfn "$RUN_LOG_DIR" "${LOG_PATH}/runs/latest"
 CRON_LOG="${CRON_LOG_DIR}/sync_${TIMESTAMP}.log"
 SUMMARY_FILE="${CRON_LOG_DIR}/latest_summary.txt"
 
+###############################################################################
+# Overlap Guard
+###############################################################################
+# A prior cron run and a manual invocation of either this wrapper or
+# hummingbot-branch-tracking.sh --rebuild can otherwise execute concurrently
+# against the same working tree — a likely contributor to the 2026-09-30
+# "Unable to create index.lock" cron aborts. flock on fd 9 makes this wrapper
+# single-instance; -n (non-blocking) means a second invocation exits 0
+# immediately instead of queueing behind the first.
+PIPELINE_LOCK_FILE="${LOG_PATH}/.hb_pipeline.lock"
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$PIPELINE_LOCK_FILE"
+    if ! flock -n 9; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S'): another hummingbot-cron-wrapper.sh run is already in progress ($PIPELINE_LOCK_FILE); exiting" >&2
+        exit 0
+    fi
+    # Step 2 below calls hummingbot-branch-tracking.sh directly as a child of
+    # this process, not a re-exec — it inherits fd 9 and this env var. That
+    # script takes the SAME lockfile itself when run standalone (e.g. a manual
+    # --rebuild) so the two entry points are mutually exclusive; here it must
+    # skip re-locking, since flock is per-fd and a second flock call from the
+    # same process tree on a fresh fd would just take an independent,
+    # non-conflicting lock on the same file — defeating the point of sharing it.
+    export HB_PIPELINE_LOCK_HELD=1
+fi
+
 # Flags
 DO_NOTIFY=false
 SKIP_UPSTREAM=false

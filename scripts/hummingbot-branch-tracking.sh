@@ -14,6 +14,26 @@
 SCRIPT_DIR="$(dirname "$0")"
 source "$SCRIPT_DIR/common.sh"
 
+###############################################################################
+# Overlap Guard
+###############################################################################
+# Same lockfile as hummingbot-cron-wrapper.sh's overlap guard. That wrapper
+# calls this script directly as a child process (not a re-exec), so when it
+# already holds the lock it exports HB_PIPELINE_LOCK_HELD=1 and we skip
+# re-locking here — flock is per-fd, so a redundant lock attempt from the same
+# process tree wouldn't deadlock, but it also wouldn't add any protection, so
+# skip it to keep the intent explicit. When this script is invoked directly
+# (e.g. a manual --rebuild), it takes the lock itself so it cannot race a
+# concurrent cron run for the same repository.
+PIPELINE_LOCK_FILE="${LOG_PATH}/.hb_pipeline.lock"
+if [ "${HB_PIPELINE_LOCK_HELD:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
+    exec 9>"$PIPELINE_LOCK_FILE"
+    if ! flock -n 9; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S'): another hummingbot pipeline run is already in progress ($PIPELINE_LOCK_FILE) — refusing to start hummingbot-branch-tracking.sh" >&2
+        exit 0
+    fi
+fi
+
 # Writes the manual-rebuild summary at process exit, so it reflects the REAL
 # outcome including the pre-push CI gate. Registered as an EXIT trap by main()
 # when REBUILD_MODE is true. Historically the summary was written inline BEFORE
@@ -40,6 +60,7 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 : "${DEVELOPMENT_BRANCH:="development"}"
 : "${FEATURE_BRANCH:="bleeding-edge"}"
 : "${LOCAL_REPO_DIR:="$HOME/PycharmProjects/Hummingbot/hummingbot"}"
+: "${INDEX_LOCK_WAIT_SECONDS:=30}"
 
 ###############################################################################
 # Merge failure tracking (Defect B)
@@ -2017,6 +2038,52 @@ merge_for_ci_branches() {
 }
 
 ###############################################################################
+# wait_for_index_lock
+# -----------------------------------------------------------------------------
+# Polls for "$(git rev-parse --git-dir)/index.lock" to clear. An external
+# process (suspected IDE git refresh) has been observed holding this lock
+# transiently — long enough to fail an unretried `git read-tree`/`git
+# checkout` (2026-09-30 cron aborts: "Unable to create index.lock: File
+# exists" then "Checkout failed"), but gone by the time anyone looks. Logs
+# once, at the start of the wait, which process appears to hold it
+# (lsof/fuser, falling back to a generic git process listing — all
+# best-effort, since none of these tools reliably attribute an external
+# editor's git subprocess). Never removes the lock file itself; that remains
+# the job of the age-gated clear_stale_git_index_lock() in the cron wrapper.
+# Returns 0 once clear (or if there was never a lock), 1 on timeout.
+###############################################################################
+wait_for_index_lock() {
+    local git_dir
+    git_dir="$(git rev-parse --git-dir 2>/dev/null)" || return 0
+    local lock="${git_dir}/index.lock"
+    [ -f "$lock" ] || return 0
+
+    local holder=""
+    if command -v lsof >/dev/null 2>&1; then
+        holder="$(lsof -- "$lock" 2>/dev/null | tail -n +2)"
+    fi
+    if [ -z "$holder" ] && command -v fuser >/dev/null 2>&1; then
+        holder="$(fuser -v "$lock" 2>&1)"
+    fi
+    if [ -z "$holder" ]; then
+        holder="$(pgrep -a git 2>/dev/null)"
+    fi
+    [ -z "$holder" ] && holder="(unknown — lsof/fuser/pgrep unavailable or reported nothing)"
+    log_step "Waiting for $lock to clear; holder: $holder"
+
+    local waited=0
+    while [ -f "$lock" ]; do
+        if [ "$waited" -ge "$INDEX_LOCK_WAIT_SECONDS" ]; then
+            log_error "Timed out after ${INDEX_LOCK_WAIT_SECONDS}s waiting for $lock; holder: $holder"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
+###############################################################################
 # Branch Operations
 ###############################################################################
 check_mergeability() {
@@ -2030,9 +2097,20 @@ check_mergeability() {
     local conflict_log="${LOG_PATH}/merge_conflicts_${branch//\//_}.txt"
     git merge-tree --write-tree "$target" "$branch" > "$conflict_log" 2>&1
     local merge_rc=$?
+
     # Restore the index to HEAD so subsequent checkouts are not blocked by
-    # staged merge-tree entries (index-dirtying defect).
-    git read-tree HEAD
+    # staged merge-tree entries (index-dirtying defect). Wait out a transient
+    # index.lock first rather than letting read-tree fail silently.
+    wait_for_index_lock || log_error "index.lock still present before read-tree HEAD — attempting anyway"
+
+    local read_tree_err
+    read_tree_err="$(git read-tree HEAD 2>&1 >/dev/null)"
+    local read_tree_rc=$?
+    if [ "$read_tree_rc" -ne 0 ]; then
+        log_error "git read-tree HEAD failed (rc=$read_tree_rc): ${read_tree_err:-<no output>}"
+        return 1
+    fi
+
     if [ $merge_rc -eq 0 ]; then
         rm -f "$conflict_log"
         return 0
@@ -2333,12 +2411,23 @@ sync_branch() {
         log_operation "$(colorize "$GREEN" "Fetch successful")"
     fi
 
-    # Ensure we're on the target branch before checking ancestry or merging
-    git checkout "$target" >& /dev/null || {
-      log_result false "Checkout failed"
-      indent_pop
-      return 1
-    }
+    # Ensure we're on the target branch before checking ancestry or merging.
+    # Wait out a transient index.lock, and retry the checkout once after a
+    # second wait before giving up (2026-09-30 cron aborts: an external
+    # process briefly held index.lock right at this checkout).
+    wait_for_index_lock || log_error "index.lock still present before checkout $target — attempting anyway"
+    local checkout_err
+    if ! checkout_err="$(git checkout "$target" 2>&1 >/dev/null)"; then
+        wait_for_index_lock || true
+        if ! checkout_err="$(git checkout "$target" 2>&1 >/dev/null)"; then
+            local checkout_reason
+            checkout_reason="$(echo "$checkout_err" | grep -iE 'fatal|error' | head -1)"
+            [ -z "$checkout_reason" ] && checkout_reason="$(echo "$checkout_err" | head -1)"
+            log_result false "Checkout failed: ${checkout_reason:-<no output>}"
+            indent_pop
+            return 1
+        fi
+    fi
 
     # Check if merge needed
     if git merge-base --is-ancestor "$ref" "$target" 2>/dev/null; then
