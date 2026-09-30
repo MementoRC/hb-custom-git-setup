@@ -711,7 +711,7 @@ target_branches:
       - name: _for_overlay/infra
         enabled: true
         tier: infrastructure
-        description: "Overlay infra layer: 14 non-.py config files (pixi, pyproject, ruff, pre-commit, CI, importlinter) taken from modular; the 5 conda-era files (Makefile, install, setup/environment.yml, setup/environment_dydx.yml, setup/pip_packages.txt) are copied through unchanged (net-zero diff vs base) rather than deleted, so upstream conda-file edits merge cleanly instead of hitting modify/delete conflicts"
+        description: "Overlay infra layer: 15 config files (pixi, pyproject, ruff, pre-commit, CI, importlinter, test-selection) taken from modular, including .github/test-selection/select_tests.py, which is a .py file; the 5 conda-era files (Makefile, install, setup/environment.yml, setup/environment_dydx.yml, setup/pip_packages.txt) are copied through unchanged (net-zero diff vs base) rather than deleted, so upstream conda-file edits merge cleanly instead of hitting modify/delete conflicts"
         permanent: true
         disable_when_in_development: false
 
