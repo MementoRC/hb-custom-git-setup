@@ -3196,7 +3196,12 @@ main() {
   #   3. gate_mode: report — run_tests() result is LOGGED only. The tier is never
   #      pushed and a failure never aborts the run (hence it is absent from
   #      _gate_branches / gate_and_push_branch below);
-  #   4. NO compile gate (no cargo build, no build_ext): pure Python by definition.
+  #   4. NO cargo/build_ext compile-GATE (no Rust, no augmented-DataProcessor
+  #      native build) — those are accelerated-only. A plain `pixi run build`
+  #      DOES still run before pytest below: hummingbot ships Cython/C++
+  #      extensions (e.g. hummingbot/core/cpp/PyRef.cpp) even on this
+  #      "pure-Python" tier, and the shared working tree's untracked .so
+  #      files would otherwise persist stale from whatever tier ran before it.
   # Because overlay is intentionally absent from _gate_branches, gate_and_push_branch()
   # is never invoked for it — the `_gate_branch != overlay` guard inside that function
   # is defensive only, in case overlay is ever added there in the future.
@@ -3236,6 +3241,29 @@ main() {
           local gate_mode
           gate_mode="$(yq -r '.target_branches.overlay.gate_mode // "block"' "$BRANCH_CONFIG" 2>/dev/null)"
           if [ "$gate_mode" = "report" ]; then
+              # Rebuild extensions against the FRESH overlay tree before pytest.
+              # Point 4 above ("NO compile gate ... pure Python by definition")
+              # is wrong: hummingbot still ships Cython/C++ extensions (e.g.
+              # hummingbot/core/cpp/PyRef.cpp) even on the pure-Python overlay
+              # tier, and this tier is re-cut from origin/development every
+              # cycle while the shared REPO_PATH working tree's untracked .so
+              # files persist across checkouts. run_tests()'s normal
+              # selected-tests path (unlike its exit=2 escape hatch) does not
+              # rebuild, and overlay is intentionally absent from
+              # gate_and_push_branch() (which builds before pytest for the
+              # other tiers) — so without this, overlay pytest can silently
+              # run against a stale .so compiled from a prior tier's sources.
+              # Reuses the same `pixi run --frozen build` invocation as
+              # run_tests()'s escape hatch, not a new build command.
+              local _overlay_pixi_cmd
+              if _overlay_pixi_cmd="$(_resolve_pixi_cmd)"; then
+                  log_operation "overlay: rebuilding extensions before pytest (pixi run build)"
+                  if ! ( cd "$REPO_PATH" && "$_overlay_pixi_cmd" run --frozen build ) >& "$RUN_LOG_DIR/overlay_build.log"; then
+                      log_error "overlay: extension build FAILED — see $RUN_LOG_DIR/overlay_build.log (continuing; overlay pytest may run against a stale .so — report-only, does not abort the run)"
+                  fi
+              else
+                  log_error "overlay: pixi not found — cannot rebuild extensions before pytest (report-only, does not abort the run)"
+              fi
               if run_tests "overlay"; then
                   log_result true "overlay tests: pass (report-only — overlay is never pushed)"
               else

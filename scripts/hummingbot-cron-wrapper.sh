@@ -512,17 +512,31 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
     # Hash all .pyx + .pxd content; prefix with Python ABI tag so a Python
     # version bump invalidates the marker even when source is unchanged.
     PYTHON_ABI_TAG=$(cd "$REPO_PATH" && pixi run --frozen python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    # .pyx/.pxd are never gitignored, so `find` is safe for them. C/C++
+    # extension sources (e.g. hummingbot/core/cpp/PyRef.cpp) must instead be
+    # enumerated via `git ls-files`: .gitignore blanket-ignores
+    # /hummingbot/**/*.c and /hummingbot/**/*.cpp (Cython's own generated
+    # output sitting next to each .pyx) and then negates that ignore just for
+    # the hand-written /hummingbot/core/cpp/*.cpp sources. `find` would also
+    # pick up the untracked generated files and churn this SHA on every run;
+    # `git ls-files` only sees what's actually tracked. .h/.hpp aren't
+    # blanket-ignored but are included the same way for consistency.
     PYX_FILES=$(find "$REPO_PATH/hummingbot" \( -name "*.pyx" -o -name "*.pxd" \) 2>/dev/null | sort)
-    if [ -z "$PYX_FILES" ]; then
+    # Plain `*` (no glob-magic) already crosses directory separators under
+    # git's default pathspec matching, so these also reach nested paths like
+    # hummingbot/core/cpp/PyRef.cpp without needing a literal "**/" segment.
+    CXX_FILES=$(git -C "$REPO_PATH" ls-files -- 'hummingbot/*.cpp' 'hummingbot/*.c' 'hummingbot/*.h' 'hummingbot/*.hpp' 2>/dev/null | awk -v p="$REPO_PATH/" '{print p $0}' | sort)
+    ALL_EXT_FILES=$(printf '%s\n%s\n' "$PYX_FILES" "$CXX_FILES" | grep -v '^$' | sort)
+    if [ -z "$ALL_EXT_FILES" ]; then
         CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:no-pyx"
     else
-        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:$(echo "$PYX_FILES" | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:$(echo "$ALL_EXT_FILES" | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
     fi
     STORED_PYX_SHA=""
     [ -f "$CYTHON_SHA_MARKER" ] && STORED_PYX_SHA=$(cat "$CYTHON_SHA_MARKER")
 
     if [ -n "$STORED_PYX_SHA" ] && [ "$CURRENT_PYX_SHA" = "$STORED_PYX_SHA" ]; then
-        CYTHON_BUILD_STATUS="skipped (no .pyx/.pxd changes)"
+        CYTHON_BUILD_STATUS="skipped (no .pyx/.pxd/C++ changes)"
         log_step "Cython build: skipped (sources unchanged, ABI tag $PYTHON_ABI_TAG)"
         log_result true "Cython build unchanged"
     else
@@ -638,7 +652,7 @@ fi
 ###############################################################################
 # Step 4: Interface Compatibility Check
 ###############################################################################
-if [ "$SKIP_INTERFACE" = false ] && { [ "$CYTHON_BUILD_STATUS" = "pass" ] || [ "$CYTHON_BUILD_STATUS" = "skipped (no .pyx/.pxd changes)" ]; }; then
+if [ "$SKIP_INTERFACE" = false ] && { [ "$CYTHON_BUILD_STATUS" = "pass" ] || [ "$CYTHON_BUILD_STATUS" = "skipped (no .pyx/.pxd/C++ changes)" ]; }; then
     log_section "$(colorize "$BLUE" "Step 4: Interface Check")"
 
     if [ -x "$SCRIPT_DIR/hummingbot-interface-check.sh" ]; then
