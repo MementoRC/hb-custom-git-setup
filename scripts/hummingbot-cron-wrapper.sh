@@ -50,7 +50,39 @@ PIPELINE_LOCK_FILE="${LOG_PATH}/.hb_pipeline.lock"
 if command -v flock >/dev/null 2>&1; then
     exec 9>"$PIPELINE_LOCK_FILE"
     if ! flock -n 9; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S'): another hummingbot-cron-wrapper.sh run is already in progress ($PIPELINE_LOCK_FILE); exiting" >&2
+        # Best-effort holder attribution (same pattern used elsewhere in this
+        # pipeline for index.lock). Not just cosmetic: fd 9 is inherited by
+        # every child this wrapper spawns (pixi, pytest, git...); if one of
+        # them were ever orphaned/outlived the wrapper, the lock would stay
+        # held and EVERY future cron tick would exit 0 here with nothing but
+        # an unseen stderr line — the pipeline would silently stop advancing.
+        # Recording it into $CRON_LOG and overwriting $SUMMARY_FILE makes a
+        # stuck lock visible wherever those are normally checked.
+        _lock_holder=""
+        if command -v lsof >/dev/null 2>&1; then
+            _lock_holder="$(lsof -- "$PIPELINE_LOCK_FILE" 2>/dev/null | tail -n +2)"
+        fi
+        if [ -z "$_lock_holder" ] && command -v fuser >/dev/null 2>&1; then
+            _lock_holder="$(fuser -v "$PIPELINE_LOCK_FILE" 2>&1)"
+        fi
+        [ -z "$_lock_holder" ] && _lock_holder="(unknown — lsof/fuser unavailable or reported nothing)"
+
+        _skip_msg="$(date '+%Y-%m-%d %H:%M:%S'): another hummingbot-cron-wrapper.sh run is already in progress ($PIPELINE_LOCK_FILE); exiting. Holder: $_lock_holder"
+        echo "$_skip_msg" >&2
+
+        mkdir -p "$CRON_LOG_DIR"
+        echo "$_skip_msg" >> "$CRON_LOG"
+        {
+            echo "Hummingbot Sync Summary"
+            echo "========================"
+            echo "Run:        $TIMESTAMP"
+            echo "Completed:  $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "Overall:    SKIPPED — another run holds $PIPELINE_LOCK_FILE"
+            echo ""
+            echo "Holder: $_lock_holder"
+            echo ""
+            echo "Log: $CRON_LOG"
+        } > "$SUMMARY_FILE"
         exit 0
     fi
     # Step 2 below calls hummingbot-branch-tracking.sh directly as a child of
@@ -356,9 +388,12 @@ else
             log_step "Selector chose $TEST_COUNT tests; running via pixi pytest (timeout ${UPSTREAM_GATE_TIMEOUT})"
             # Convert newline-delimited file list to args for pytest
             cd "$REPO_PATH" || true
+            # 9>&- : this pytest run is long-lived; close our overlap-guard fd
+            # for it so a stray/orphaned test process can never keep the
+            # pipeline lock held past this wrapper's own exit.
             if timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
                 --quiet --tb=short $TEST_FILES \
-                > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1; then
+                > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1 9>&-; then
                 UPSTREAM_GATE_STATUS="pass"
                 log_result true "Upstream gate pytest: PASS ($TEST_COUNT tests, see $(basename "$UPSTREAM_GATE_PYTEST_LOG"))"
                 clear_stale_git_index_lock "$REPO_PATH" 0 || true
@@ -390,9 +425,10 @@ else
         # Escape-hatch: too many selected tests; fall back to full suite
         log_step "Selector emitted escape-hatch (exit 2); running full suite via pixi pytest"
         cd "$REPO_PATH" || true
+        # 9>&- : see note above — close the overlap-guard fd for this long-lived run.
         if timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
             --quiet --tb=short \
-            > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1; then
+            > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1 9>&-; then
             UPSTREAM_GATE_STATUS="pass"
             log_result true "Upstream gate full-suite pytest: PASS"
             clear_stale_git_index_lock "$REPO_PATH" 0 || true
@@ -467,6 +503,12 @@ if [ "$SKIP_TRACKING" = false ]; then
     clear_stale_git_index_lock "$REPO_PATH" 60 || log_step "Stale-lock cleanup unsuccessful; Step 2 may still hit lock"
     clear_stale_submodule_index_locks "$REPO_PATH" 60 || true
 
+    # Deliberately NOT closing fd 9 here: hummingbot-branch-tracking.sh needs
+    # to inherit it (checks HB_PIPELINE_LOCK_HELD to skip re-locking its own
+    # copy of this guard). That script's own long-running pixi build/pytest/
+    # cargo gate invocations (main()'s tier gate, ~10 call sites) are NOT
+    # closing fd 9 either — too many call sites to touch safely without a
+    # shell to verify with; noted here as a follow-up rather than done blind.
     if [ -x "$SCRIPT_DIR/hummingbot-branch-tracking.sh" ]; then
         if "$SCRIPT_DIR/hummingbot-branch-tracking.sh"; then
             TRACKING_STATUS="success"
@@ -572,7 +614,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
             ERRORS+=("Cython build: cd to REPO_PATH failed")
             log_result false "Cython build: cd to $REPO_PATH failed"
             [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
-        elif pixi run --frozen build >> "$CRON_LOG" 2>&1; then
+        elif pixi run --frozen build >> "$CRON_LOG" 2>&1 9>&-; then
             echo "$CURRENT_PYX_SHA" > "$CYTHON_SHA_MARKER"
             CYTHON_BUILD_STATUS="pass"
             log_result true "Cython build succeeded"
@@ -605,7 +647,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
     if cd "$REPO_PATH" 2>/dev/null; then
         # compat-check: now covers all 14 sub-packages
         log_operation "Running compat-check (all sub-packages)..."
-        if pixi run --frozen compat-check; then
+        if pixi run --frozen compat-check 9>&-; then
             COMPAT_RESULT="pass"
             log_result true "compat-check passed"
         else
@@ -616,7 +658,7 @@ if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
 
         # lint-boundaries: import-linter boundary check
         log_operation "Running lint-boundaries (import-linter)..."
-        if pixi run --frozen lint-boundaries; then
+        if pixi run --frozen lint-boundaries 9>&-; then
             BOUNDARY_RESULT="pass"
             log_result true "lint-boundaries passed"
         else

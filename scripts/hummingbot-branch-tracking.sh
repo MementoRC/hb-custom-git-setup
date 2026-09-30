@@ -29,10 +29,23 @@ PIPELINE_LOCK_FILE="${LOG_PATH}/.hb_pipeline.lock"
 if [ "${HB_PIPELINE_LOCK_HELD:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
     exec 9>"$PIPELINE_LOCK_FILE"
     if ! flock -n 9; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S'): another hummingbot pipeline run is already in progress ($PIPELINE_LOCK_FILE) — refusing to start hummingbot-branch-tracking.sh" >&2
-        exit 0
+        # Best-effort holder attribution, same pattern as wait_for_index_lock()
+        # below. A manual --rebuild that silently "succeeded" without doing
+        # anything would be misleading, so this exits 1 (not 0 like the
+        # cron-wrapper's guard, which treats a skip as a normal no-op tick).
+        _lock_holder=""
+        if command -v lsof >/dev/null 2>&1; then
+            _lock_holder="$(lsof -- "$PIPELINE_LOCK_FILE" 2>/dev/null | tail -n +2)"
+        fi
+        if [ -z "$_lock_holder" ] && command -v fuser >/dev/null 2>&1; then
+            _lock_holder="$(fuser -v "$PIPELINE_LOCK_FILE" 2>&1)"
+        fi
+        [ -z "$_lock_holder" ] && _lock_holder="(unknown — lsof/fuser unavailable or reported nothing)"
+        log_error "Another hummingbot pipeline run is already in progress ($PIPELINE_LOCK_FILE) — refusing to start hummingbot-branch-tracking.sh. Holder: $_lock_holder"
+        exit 1
     fi
 fi
+unset _lock_holder
 
 # Writes the manual-rebuild summary at process exit, so it reflects the REAL
 # outcome including the pre-push CI gate. Registered as an EXIT trap by main()
