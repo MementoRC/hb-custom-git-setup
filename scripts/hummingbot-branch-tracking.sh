@@ -2249,6 +2249,29 @@ extract_missing_tests() {
     [ ${#missing_tests[@]} -gt 0 ] && return 1 || return 0
 }
 
+# True when the working tree has pixi config (an infra branch that carries it
+# may have been reverted, leaving nothing for `pixi run build` to read).
+_tree_has_pixi_config() {
+    [ -f "$REPO_PATH/pixi.toml" ] && return 0
+    [ -f "$REPO_PATH/pyproject.toml" ] && grep -q '^\[tool\.pixi' "$REPO_PATH/pyproject.toml"
+}
+
+# Rebuild compiled extensions against the current tree (overlay tier only).
+# $1 = log message, $2 = build log path. Report-only: failures are logged, never fatal.
+_overlay_rebuild_extensions() {
+    local msg="$1"
+    local build_log="$2"
+    local pixi_cmd
+    if ! pixi_cmd="$(_resolve_pixi_cmd)"; then
+        log_error "overlay: pixi not found — cannot rebuild extensions before pytest (report-only, does not abort the run)"
+        return 0
+    fi
+    log_operation "$msg"
+    if ! ( cd "$REPO_PATH" && "$pixi_cmd" run --frozen build ) >& "$build_log"; then
+        log_error "overlay: extension build FAILED — see $build_log (continuing; overlay pytest may run against a stale .so — report-only, does not abort the run)"
+    fi
+}
+
 run_tests() {
     local target_branch="$1"
     local source_branch="${2:-}"
@@ -2322,6 +2345,12 @@ run_tests() {
             local test_count
             test_count="$(echo "$test_files" | wc -l)"
             log_step "Selector chose $test_count tests; running pixi pytest"
+            if [ "$target_branch" = "overlay" ] && _tree_has_pixi_config; then
+                local _build_name="${source_branch:-$target_branch}"
+                _overlay_rebuild_extensions \
+                    "overlay: rebuilding extensions before merge-time pytest for ${_build_name}" \
+                    "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${_build_name//\//_}.log"
+            fi
             # shellcheck disable=SC2086
             (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v) > "$pytest_log" 2>&1
             local pytest_exit=$?
@@ -3451,14 +3480,12 @@ main() {
               # run against a stale .so compiled from a prior tier's sources.
               # Reuses the same `pixi run --frozen build` invocation as
               # run_tests()'s escape hatch, not a new build command.
-              local _overlay_pixi_cmd
-              if _overlay_pixi_cmd="$(_resolve_pixi_cmd)"; then
-                  log_operation "overlay: rebuilding extensions before pytest (pixi run build)"
-                  if ! ( cd "$REPO_PATH" && "$_overlay_pixi_cmd" run --frozen build ) >& "$RUN_LOG_DIR/overlay_build.log"; then
-                      log_error "overlay: extension build FAILED — see $RUN_LOG_DIR/overlay_build.log (continuing; overlay pytest may run against a stale .so — report-only, does not abort the run)"
-                  fi
+              if _tree_has_pixi_config; then
+                  _overlay_rebuild_extensions \
+                      "overlay: rebuilding extensions before pytest (pixi run build)" \
+                      "$RUN_LOG_DIR/overlay_build.log"
               else
-                  log_error "overlay: pixi not found — cannot rebuild extensions before pytest (report-only, does not abort the run)"
+                  log_warning "overlay: skipping extension build — no pixi config in tree (infra branch did not land)"
               fi
               if run_tests "overlay"; then
                   log_result true "overlay tests: pass (report-only — overlay is never pushed)"
