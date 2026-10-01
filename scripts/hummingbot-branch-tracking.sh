@@ -2119,6 +2119,14 @@ check_mergeability() {
     local read_tree_err
     read_tree_err="$(git read-tree HEAD 2>&1 >/dev/null)"
     local read_tree_rc=$?
+    if [ "$read_tree_rc" -ne 0 ] && [[ "$read_tree_err" == *index.lock* || "$read_tree_err" == *"File exists"* ]]; then
+        # Lock was taken between the wait check and the call (or by merge-tree's
+        # aftermath): wait again (logs the holder) and retry once.
+        log_step "git read-tree HEAD hit an index.lock collision; waiting and retrying once"
+        wait_for_index_lock || true
+        read_tree_err="$(git read-tree HEAD 2>&1 >/dev/null)"
+        read_tree_rc=$?
+    fi
     if [ "$read_tree_rc" -ne 0 ]; then
         log_error "git read-tree HEAD failed (rc=$read_tree_rc): ${read_tree_err:-<no output>}"
         return 1
@@ -2345,11 +2353,11 @@ run_tests() {
             local test_count
             test_count="$(echo "$test_files" | wc -l)"
             log_step "Selector chose $test_count tests; running pixi pytest"
-            if [ "$target_branch" = "overlay" ] && _tree_has_pixi_config; then
-                local _build_name="${source_branch:-$target_branch}"
+            # Merge-time only: the tier-level overlay gate builds before its own pytest.
+            if [ "$target_branch" = "overlay" ] && [ -n "$source_branch" ] && _tree_has_pixi_config; then
                 _overlay_rebuild_extensions \
-                    "overlay: rebuilding extensions before merge-time pytest for ${_build_name}" \
-                    "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${_build_name//\//_}.log"
+                    "overlay: rebuilding extensions before merge-time pytest for ${source_branch}" \
+                    "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${source_branch//\//_}.log"
             fi
             # shellcheck disable=SC2086
             (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v) > "$pytest_log" 2>&1
