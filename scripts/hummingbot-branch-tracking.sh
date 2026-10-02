@@ -127,6 +127,7 @@ PYTEST_GATE_ARGS=(
     --ignore=test/hummingbot/connector/derivative/dydx_v4_perpetual/
     --ignore=test/hummingbot/connector/derivative/decibel_perpetual/
     --ignore=test/hummingbot/core/rate_oracle/sources/test_decibel_perpetual_rate_source.py
+    --ignore=test/hummingbot/data_feed/candles_feed/decibel_perpetual_candles/
     --ignore=test/hummingbot/connector/exchange/vertex/
     --ignore=test/hummingbot/connector/exchange/ascend_ex/
     --ignore=test/hummingbot/core/rate_oracle/sources/test_ascend_ex_rate_source.py
