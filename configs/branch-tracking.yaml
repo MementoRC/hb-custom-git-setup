@@ -332,6 +332,13 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_ci/drop-decibel-sdk
+        enabled: true
+        tier: infrastructure
+        description: "Drop `decibel-python-sdk==0.2.1` from setup.py install_requires. The SDK has no conda-forge package yet (pending in staged-recipes) and the fork forbids PyPI deps, so the pixi env never has it. All decibel connector/rate-source/candles source, registry entries and tests are upstream-owned and deliberately KEPT (deleting them would conflict on every rebuild); non-decibel modules (rate_oracle, candles_factory, client_config_map) load without the SDK, and decibel tests are excluded via the workflow/quick-check --ignore lists (see _for_ci/ignore-decibel-candles-test) and the gate ignore list. aptos-sdk left in place. RETIRE (three-part) once the decibel conda package lands and is added to the pixi env. Branch off origin/development, commit d95a9fe1, GPG-signed. Added 2026-10-02."
+        permanent: false
+        disable_when_in_development: false
+
       - name: _for_ci/lambdaplex-auth-detect-private-key-exclude
         enabled: true
         tier: infrastructure
