@@ -2366,7 +2366,7 @@ run_tests() {
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "pytest PASS ($test_count tests); see $(basename "$pytest_log")"
                 # Update state with success
-                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mode branch --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
                 return 0
             else
@@ -2393,7 +2393,7 @@ run_tests() {
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "Full-suite pytest PASS; see $(basename "$pytest_log")"
-                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
+                (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mode branch --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
                 return 0
             else
