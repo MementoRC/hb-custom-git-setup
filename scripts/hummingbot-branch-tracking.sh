@@ -1209,6 +1209,18 @@ conflict_side_is_subset() {
        git show ":2:$file" > "$ours" 2>/dev/null &&
        git show ":3:$file" > "$theirs" 2>/dev/null; then
 
+        # ruff format does NOT sort imports, so a side whose only change is
+        # isort reordering (e.g. modular's style pass moving `import unittest`
+        # / `from typing import ...`) yields spurious added/removed lines and
+        # fails the subset test -- a false "logical conflict" that aborted
+        # rebuild 2026-10-04 on test_async_throttler.py. Normalising import
+        # ORDER on all three blobs drops pure reordering from both change
+        # sets; genuinely added/removed imports still appear. Failures are
+        # ignored, like the base format.
+        $ruff_cmd check --select I --fix-only --quiet --no-cache "$base" >/dev/null 2>&1
+        $ruff_cmd check --select I --fix-only --quiet --no-cache "$ours" >/dev/null 2>&1
+        $ruff_cmd check --select I --fix-only --quiet --no-cache "$theirs" >/dev/null 2>&1
+
         # The merge-base blob is only a common reference point for computing
         # the two changed-line sets below — it is never compared for equality
         # itself, so it need not be formatter-clean. If ruff can't format it
