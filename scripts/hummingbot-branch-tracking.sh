@@ -1183,13 +1183,20 @@ conflict_side_is_subset() {
     local subset_side="$2"
     local ruff_cmd rc=1
     local base ours theirs diff_base_theirs diff_base_ours
+    local plain=0
 
+    # .py files get the ruff-normalised comparison. .gitignore (any depth) is
+    # the only other allowlisted type: it gets a plain-text comparison of the
+    # raw diff line sets, with no formatter. Everything else stays a conflict.
     case "$file" in
         *.py) ;;
+        .gitignore|*/.gitignore) plain=1 ;;
         *) return 1 ;;
     esac
 
-    if command -v ruff >/dev/null 2>&1; then
+    if [ "$plain" -eq 1 ]; then
+        log_detail "  plain-text subset check: $file"
+    elif command -v ruff >/dev/null 2>&1; then
         ruff_cmd="ruff"
     elif command -v pixi >/dev/null 2>&1; then
         ruff_cmd="pixi run -e ci ruff"
@@ -1217,9 +1224,11 @@ conflict_side_is_subset() {
         # ORDER on all three blobs drops pure reordering from both change
         # sets; genuinely added/removed imports still appear. Failures are
         # ignored, like the base format.
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$base" >/dev/null 2>&1
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$ours" >/dev/null 2>&1
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$theirs" >/dev/null 2>&1
+        if [ "$plain" -eq 0 ]; then
+            $ruff_cmd check --select I --fix-only --quiet --no-cache "$base" >/dev/null 2>&1
+            $ruff_cmd check --select I --fix-only --quiet --no-cache "$ours" >/dev/null 2>&1
+            $ruff_cmd check --select I --fix-only --quiet --no-cache "$theirs" >/dev/null 2>&1
+        fi
 
         # The merge-base blob is only a common reference point for computing
         # the two changed-line sets below — it is never compared for equality
@@ -1228,10 +1237,13 @@ conflict_side_is_subset() {
         # fall back to the raw (unformatted) base blob rather than bailing.
         # An unformatted base perturbs diff_base_theirs and diff_base_ours
         # symmetrically, so the subset comparison below still holds.
-        $ruff_cmd format --quiet "$base" >/dev/null 2>&1
+        if [ "$plain" -eq 0 ]; then
+            $ruff_cmd format --quiet "$base" >/dev/null 2>&1
+        fi
 
-        if $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
-           $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1; then
+        if [ "$plain" -eq 1 ] ||
+           { $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
+             $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1; }; then
 
             diff -u0 "$base" "$theirs" > "$diff_base_theirs"
             diff -u0 "$base" "$ours" > "$diff_base_ours"
