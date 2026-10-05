@@ -47,13 +47,6 @@ target_branches:
 
       # _for_ci/re-remove-conda-setup: RETIRED 2026-09-15 — its 5 conda deletions (Makefile, install, setup/environment.yml, setup/environment_dydx.yml, setup/pip_packages.txt) were folded into ci-base seed v3 (188ed6b4), recorded against current development so the seed+development merge no longer resurrects them. Branch had gone stale and aborted the rebuild on the first _for_ci merge with an unresolvable modify/delete.
 
-      - name: _for_ci/ignore-rust-artifacts
-        enabled: false  # disabled 2026-10-04: superseded by _for_ci/ignore-rust-artifacts-rederived (whole-file .gitignore copy reverted 7 development lines). Retire (three-part) once -rederived has landed.
-        tier: infrastructure
-        description: "Gitignore hummingbot/rust/ build artifacts (target/ dir + Cargo.lock). Untracked build outputs that appeared in git status on every tier and triggered repeated 'working directory not clean' cron aborts. Neither path is tracked on development (no hummingbot/rust/) nor committed on the accelerated tier, so the ignore shadows no tracked source. Class-P hygiene — fold into the next seed re-cut, then retire. Branch off origin/development, commit 95db7e8a, GPG-signed. Added 2026-07-11."
-        permanent: false
-        disable_when_in_development: false
-
       - name: _for_ci/ignore-rust-artifacts-rederived
         enabled: true
         tier: infrastructure
