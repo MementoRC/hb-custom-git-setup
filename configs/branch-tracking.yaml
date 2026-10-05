@@ -94,6 +94,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/guard-optional-sdk-tests
+        enabled: true
+        tier: infrastructure
+        description: "Class T (test-only): guard decibel_perpetual and dydx_v4_perpetual test modules with module-level pytest.importorskip for decibel/aptos_sdk/v4_proto (PyPI-only SDKs, not in pixi ci env) so pytest collection no longer aborts with 10 ModuleNotFoundError errors on the quick-check (PR #69). Test files only, connector source untouched. Added 2026-10-05."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_ci/format-upstream-residuals
         enabled: false
         tier: infrastructure
