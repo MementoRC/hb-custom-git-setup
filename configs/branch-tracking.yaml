@@ -48,11 +48,18 @@ target_branches:
       # _for_ci/re-remove-conda-setup: RETIRED 2026-09-15 — its 5 conda deletions (Makefile, install, setup/environment.yml, setup/environment_dydx.yml, setup/pip_packages.txt) were folded into ci-base seed v3 (188ed6b4), recorded against current development so the seed+development merge no longer resurrects them. Branch had gone stale and aborted the rebuild on the first _for_ci merge with an unresolvable modify/delete.
 
       - name: _for_ci/ignore-rust-artifacts
-        enabled: true
+        enabled: false  # disabled 2026-10-04: superseded by _for_ci/ignore-rust-artifacts-rederived (whole-file .gitignore copy reverted 7 development lines). Retire (three-part) once -rederived has landed.
         tier: infrastructure
         description: "Gitignore hummingbot/rust/ build artifacts (target/ dir + Cargo.lock). Untracked build outputs that appeared in git status on every tier and triggered repeated 'working directory not clean' cron aborts. Neither path is tracked on development (no hummingbot/rust/) nor committed on the accelerated tier, so the ignore shadows no tracked source. Class-P hygiene — fold into the next seed re-cut, then retire. Branch off origin/development, commit 95db7e8a, GPG-signed. Added 2026-07-11."
         permanent: false
         disable_when_in_development: false
+
+      - name: _for_ci/ignore-rust-artifacts-rederived
+        enabled: true
+        tier: infrastructure
+        description: "Re-derived from origin/development: adds only the rust-artifact ignore patterns to .gitignore as hunks (no whole-file copy). Replaces _for_ci/ignore-rust-artifacts, whose .gitignore copy reverted 7 development lines on every --rebuild. Commit c4995759, GPG-signed. Added 2026-10-04."
+        permanent: false
+        disable_when_in_development: true
 
       # _for_ci/fix-bitget-limit-maker-order-type: RETIRED 2026-07-22 — fix already fully upstream in origin/development; branch's stale ci-base ancestry only resurrected removed connectors. Local+origin deleted, entry purged.
 
@@ -106,13 +113,6 @@ target_branches:
         description: "Re-derived replacement for _for_ci/format-upstream-residuals (superseded 2026-09-14). Cut fresh from origin/development so it carries no stale ancestry. Keeps the two still-correct files and DROPS the stale one. KEPT: .pre-commit-config.yaml (ruff + ruff-format v0.15.7 replacing flake8/autopep8/isort/eslint, pre-commit-hooks v4.5.0, sub-packages/ excluded); vertex_constants.py duplicate POSITION_CHANGE_EVENT_TYPE removal, which is load-bearing because ci-base-seed-v1 carries 2 definitions and ruff selects F with the file inside its include glob. DROPPED: lp_executor.py, whose Jun-19 formatting snapshot discarded 627 live upstream lines; that formatting is redundant now that the rebuild runs its own py312 ruff --unsafe-fixes + format pass plus a final normalization after the _for_ci merges. Commit f4aded00, GPG-signed. Added 2026-09-14."
         permanent: false
         disable_when_in_development: true
-
-      - name: _for_ci/asyncio-test-coroutine-fixes
-        enabled: false  # disabled 2026-10-04: superseded by _for_ci/asyncio-test-coroutine-fixes-rederived; its cosmetic reflow commit c486af3f carried whole-file lighter candles tests that UPSTREAM-REVERTed development's newer lighter tests (81/85 stale lines) on every --rebuild. Retire (three-part) once the -rederived branch has landed on ci-base.
-        tier: infrastructure
-        description: "Python 3.12 asyncio coroutine handling: xrpl_transaction_pipeline.stop() double-await fix (RuntimeError: cannot reuse already awaited coroutine) + lighter perpetual/spot candles unawaited-coroutine test hygiene"
-        permanent: false
-        disable_when_in_development: false
 
       - name: _for_ci/asyncio-test-coroutine-fixes-rederived
         enabled: true
