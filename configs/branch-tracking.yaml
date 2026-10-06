@@ -289,10 +289,10 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
-      - name: _for_ci/quick-check-ignore-parity
-        enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
+      - name: _for_ci/quick-check-ignore-parity-rederived
+        enabled: true
         tier: infrastructure
-        description: "Apply full-ci pytest --ignore list (10 paths: mock, ndax, dydx_v4_perpetual, decibel_perpetual, decibel rate-source test, vertex, gateway, oms_connector, amm_arb, cross_exchange_market_making) to the diff-driven quick-check.yml, which previously ran pytest with NO ignores. Fixes quick-check ModuleNotFoundError (decibel/dydx_v4/vertex) when select_tests.py picks broadly after a ci-base merge. ci-base ancestry (quick-check.yml/workflow.yml are ci-base-only). Commit 12e3f460. Added 2026-07-05."
+        description: "BASED ON THE SEED TAG ci-base-seed-v5 (commit 3272d52a) - an intentional exception to the development-base rule, because .github/workflows/quick-check.yml exists only in the seed lineage (absent on development). Single commit c9294f4e: applies the Build + Test pytest --ignore list (10 paths: mock, ndax, dydx_v4_perpetual, decibel_perpetual, decibel rate-source test, vertex, gateway, oms_connector, amm_arb, cross_exchange_market_making) to both quick-check pytest invocations via job-level env PYTEST_IGNORES. Supersedes the retired whole-file _for_ci/quick-check-ignore-parity (12e3f460). Re-derived 2026-10-06; must be re-derived if the seed is re-cut."
         permanent: false
         disable_when_in_development: false
 
