@@ -1152,6 +1152,14 @@ conflict_is_format_only() {
 
     if git show ":2:$file" > "$ours" 2>/dev/null &&
        git show ":3:$file" > "$theirs" 2>/dev/null &&
+       # Typing-style modernization (Optional[X] -> X | None, List -> list) is
+       # semantics-preserving on py312. ci-base gets it from the py312 transform
+       # pass while modular branches don't, so without this a pure typing-style
+       # difference looks like a logical conflict. F401 drops the now-unused
+       # typing imports. Only these normalized comparison copies are touched,
+       # never the committed result. Failures are ignored, like the format below.
+       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$ours" >/dev/null 2>&1 || true; } &&
+       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$theirs" >/dev/null 2>&1 || true; } &&
        $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
        $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1 &&
        cmp -s "$ours" "$theirs"; then
@@ -1260,9 +1268,16 @@ conflict_side_is_subset() {
         # ORDER on all three blobs drops pure reordering from both change
         # sets; genuinely added/removed imports still appear. Failures are
         # ignored, like the base format.
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$base" >/dev/null 2>&1
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$ours" >/dev/null 2>&1
-        $ruff_cmd check --select I --fix-only --quiet --no-cache "$theirs" >/dev/null 2>&1
+        #
+        # The same pass also modernizes typing style (UP006/UP007/UP035/UP045)
+        # and drops the then-unused imports (F401). That is semantics-preserving
+        # on py312; ci-base gets it from the py312 transform pass while modular
+        # branches don't, so pure Optional[X] vs X | None differences would
+        # otherwise read as unique changes. Only these normalized comparison
+        # copies are touched, never the committed result.
+        $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$base" >/dev/null 2>&1
+        $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$ours" >/dev/null 2>&1
+        $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$theirs" >/dev/null 2>&1
 
         # The merge-base blob is only a common reference point for computing
         # the two changed-line sets below — it is never compared for equality
@@ -1335,6 +1350,96 @@ conflict_ci_base_is_subset() {
 # and executors/validation.py, merge-base d5c2ca758d.
 conflict_modular_is_subset() {
     conflict_side_is_subset "$1" "ours"
+}
+
+###############################################################################
+# Region-level style-only resolver.
+# Whole-file equality (conflict_is_format_only) and the subset tests are rightly
+# false when each side ALSO carries unique NON-conflicting content that git
+# already merged cleanly. What remains is the conflict regions themselves, and
+# those can differ only in typing style (ci-base's py312 transform vs modular's
+# Optional[X] / List[X]). conflict_regions_style_only proves that by building
+# two whole-file variants from the conflicted working-tree file -- A with every
+# region replaced by its OURS side, B by its THEIRS side (text outside regions
+# is git's merge and identical in both) -- normalizing them exactly like
+# conflict_is_format_only, and comparing. rc 0 = style-only; the caller must
+# then run resolve_conflict_regions_theirs (NOT checkout --theirs/--ours, which
+# would discard the other side's non-conflicting content).
+###############################################################################
+# $1=conflicted file  $2=ours|theirs. Writes the variant to stdout. rc 1 on
+# malformed or nested markers. Handles merge and diff3/zdiff3 conflict styles
+# (the ||||||| base section is dropped).
+conflict_regions_variant() {
+    awk -v keep="$2" '
+        /^<<<<<<< / { if (st != 0) { bad = 1; exit 1 } st = 1; next }
+        /^\|\|\|\|\|\|\|/ && st == 1 { st = 2; next }
+        /^=======$/ && (st == 1 || st == 2) { st = 3; next }
+        /^>>>>>>> / { if (st != 3) { bad = 1; exit 1 } st = 0; next }
+        /^(\|\|\|\|\|\|\||=======$)/ && st != 0 { bad = 1; exit 1 }
+        st == 0 { print; next }
+        st == 1 && keep == "ours" { print; next }
+        st == 3 && keep == "theirs" { print; next }
+        END { if (bad || st != 0) exit 1 }
+    ' "$1"
+}
+
+conflict_regions_style_only() {
+    local file="$1"
+    local ruff_cmd a b raw rc=1
+
+    case "$file" in
+        *.py) ;;
+        *) return 1 ;;
+    esac
+
+    if command -v ruff >/dev/null 2>&1; then
+        ruff_cmd="ruff"
+    elif command -v pixi >/dev/null 2>&1; then
+        ruff_cmd="pixi run -e ci ruff"
+    else
+        return 1
+    fi
+
+    a=$(mktemp --suffix=.py) || return 1
+    b=$(mktemp --suffix=.py) || { rm -f "$a"; return 1; }
+    raw=$(mktemp --suffix=.py) || { rm -f "$a" "$b"; return 1; }
+
+    # Same normalization as conflict_is_format_only; ruff check failures are
+    # ignored, ruff format failures mean "cannot prove it".
+    #
+    # Equality is proven on NORMALIZED copies, but the committed result is the
+    # RAW theirs-regions variant. Normalization (F401/UP) would hide modular's
+    # still-used Optional/List elsewhere in the file while raw theirs may have
+    # dropped those imports, so the raw copy must also be free of undefined
+    # names (F821) and redefinitions (F811). Any non-zero ruff exit fails.
+    if conflict_regions_variant "$file" ours > "$a" 2>/dev/null &&
+       conflict_regions_variant "$file" theirs > "$b" 2>/dev/null &&
+       cp "$b" "$raw" &&
+       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$a" >/dev/null 2>&1 || true; } &&
+       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$b" >/dev/null 2>&1 || true; } &&
+       $ruff_cmd format --quiet "$a" >/dev/null 2>&1 &&
+       $ruff_cmd format --quiet "$b" >/dev/null 2>&1 &&
+       cmp -s "$a" "$b" &&
+       $ruff_cmd check --select F821,F811 --no-fix --quiet --no-cache --target-version py312 "$raw" >/dev/null 2>&1; then
+        rc=0
+    fi
+
+    rm -f "$a" "$b" "$raw"
+    return $rc
+}
+
+# Rewrite the conflicted working-tree file with every region replaced by its
+# THEIRS side (raw, un-normalized). Text outside the regions is untouched.
+resolve_conflict_regions_theirs() {
+    local file="$1" tmp
+    tmp=$(mktemp) || return 1
+    if conflict_regions_variant "$file" theirs > "$tmp" 2>/dev/null; then
+        cat "$tmp" > "$file" || { rm -f "$tmp"; return 1; }
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
 }
 
 ###############################################################################
@@ -1446,6 +1551,9 @@ sync_modular_branch() {
                             elif conflict_modular_is_subset "$file"; then
                                 format_only+=("$file")
                                 resolve_side+=("theirs_subset")
+                            elif conflict_regions_style_only "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("style_regions")
                             else
                                 logical_conflicts+=("$file")
                             fi ;;
@@ -1459,7 +1567,7 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0
+                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0
                 for i in "${!format_only[@]}"; do
                     f="${format_only[$i]}"
                     if [ "${resolve_side[$i]}" = "modular_owned" ]; then
@@ -1472,6 +1580,16 @@ sync_modular_branch() {
                     elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
                         git checkout --theirs "$f" 2>/dev/null
                         modular_subset_count=$((modular_subset_count + 1))
+                    elif [ "${resolve_side[$i]}" = "style_regions" ]; then
+                        # Whole-file checkout would discard the other side's
+                        # non-conflicting content; only the regions take theirs.
+                        resolve_conflict_regions_theirs "$f" || {
+                            log_error "Failed to write style-only region resolution for $f"
+                            git merge --abort >& /dev/null
+                            return 1
+                        }
+                        log_detail "  style-only regions $f: took ci-base's text for the conflict regions, kept git's merge elsewhere"
+                        style_region_count=$((style_region_count + 1))
                     else
                         git checkout --theirs "$f" 2>/dev/null
                         format_only_count=$((format_only_count + 1))
@@ -1483,7 +1601,7 @@ sync_modular_branch() {
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular))"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions))"
             fi
         fi
     else
