@@ -1539,7 +1539,10 @@ sync_modular_branch() {
                         pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
                             logical_conflicts+=("$file") ;;
                         *)
-                            if modular_owns_path "$file"; then
+                            if ci_base_generated_path "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("generated")
+                            elif modular_owns_path "$file"; then
                                 format_only+=("$file")
                                 resolve_side+=("modular_owned")
                             elif conflict_is_format_only "$file"; then
@@ -1567,10 +1570,14 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0
+                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0 generated_count=0
                 for i in "${!format_only[@]}"; do
                     f="${format_only[$i]}"
-                    if [ "${resolve_side[$i]}" = "modular_owned" ]; then
+                    if [ "${resolve_side[$i]}" = "generated" ]; then
+                        git checkout --theirs -- "$f" && git add -- "$f"
+                        log_detail "  generated $f: took ci-base's version (generated artifact, see ci_base_generated_path)"
+                        generated_count=$((generated_count + 1))
+                    elif [ "${resolve_side[$i]}" = "modular_owned" ]; then
                         git checkout --ours "$f" 2>/dev/null
                         log_detail "  modular-owned $f: kept modular's version (declared in modular_owned_paths)"
                         owned_count=$((owned_count + 1))
@@ -1601,7 +1608,7 @@ sync_modular_branch() {
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions))"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions), $generated_count generated-file conflicts resolved (took ci-base))"
             fi
         fi
     else
@@ -1865,6 +1872,19 @@ merge_for_modular_branches() {
 read_subpackage_tracking() {
     local cfg="${1:-$BRANCH_CONFIG}"
     yq -r '.subpackage_tracking // {} | to_entries[] | "\(.key) \(.value)"' "$cfg" 2>/dev/null
+}
+
+# True for generated artifacts that always take ci-base's version on the
+# ci-base -> modular merge. pixi.lock is re-solved by ci-base on every rebuild
+# ("[lock-resolve] re-solving pixi.lock from merged pyproject for ci-base") and
+# the modular gate later copies it from ci-base anyway ("[lock-resolve] pinning
+# pixi.lock from ci-base for modular"), so the policy is already modular == ci-base
+# and a content conflict there is never a logical one. Add more paths as needed.
+ci_base_generated_path() {
+    case "$1" in
+        pixi.lock) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 read_modular_owned_paths() {

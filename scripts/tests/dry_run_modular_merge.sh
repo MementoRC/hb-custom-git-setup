@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 
 log_detail() { :; }
-for fn in read_modular_owned_paths modular_owns_path \
+for fn in ci_base_generated_path read_modular_owned_paths modular_owns_path \
           conflict_is_format_only conflict_gitignore_pattern_subset \
           conflict_side_is_subset conflict_ci_base_is_subset conflict_modular_is_subset \
           conflict_regions_variant conflict_regions_style_only; do
@@ -41,7 +41,7 @@ cd "$WT" || exit 2
 # Conflicts are expected; fail-open.
 git merge --no-commit --no-ff "$THEIRS_REF" >/dev/null 2>&1 || true
 
-n_owned=0; n_fmt=0; n_subset=0; n_msubset=0; n_regions=0; n_logical=0
+n_generated=0; n_owned=0; n_fmt=0; n_subset=0; n_msubset=0; n_regions=0; n_logical=0
 logical_files=()
 while IFS= read -r file; do
     [ -z "$file" ] && continue
@@ -49,7 +49,9 @@ while IFS= read -r file; do
         pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
             v="LOGICAL"; n_logical=$((n_logical + 1)) ;;
         *)
-            if modular_owns_path "$file"; then
+            if ci_base_generated_path "$file"; then
+                v="generated(theirs)"; n_generated=$((n_generated + 1))
+            elif modular_owns_path "$file"; then
                 v="modular-owned"; n_owned=$((n_owned + 1))
             elif conflict_is_format_only "$file"; then
                 v="format-only(theirs)"; n_fmt=$((n_fmt + 1))
@@ -67,7 +69,7 @@ while IFS= read -r file; do
     [ "$v" = "LOGICAL" ] && logical_files+=("$file")
 done < <(git diff --name-only --diff-filter=U)
 
-echo "SUMMARY modular-owned=$n_owned format-only=$n_fmt ci-base-subset=$n_subset modular-subset=$n_msubset style-regions=$n_regions LOGICAL=$n_logical"
+echo "SUMMARY generated=$n_generated modular-owned=$n_owned format-only=$n_fmt ci-base-subset=$n_subset modular-subset=$n_msubset style-regions=$n_regions LOGICAL=$n_logical"
 for f in "${logical_files[@]}"; do echo "LOGICAL $f"; done
 git merge --abort >/dev/null 2>&1 || true
 [ "$n_logical" -eq 0 ]
