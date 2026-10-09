@@ -28,11 +28,17 @@
 #                                 feature         Specific functionality additions that build on top
 #                                                 of the infrastructure layer. Merged AFTER all
 #                                                 infrastructure branches are applied.
+#   build_mode:                 (ci-base only) seed (default) | incremental (not yet implemented).
+#                               Selects how ci-base is rebuilt; --reseed forces seed.
 #
 # Last reviewed: 2026-07-07
 
 target_branches:
   ci-base:
+    # build_mode: "seed" (default) or "incremental". "incremental" is not
+    # implemented yet (incremental ci-base plan Tasks 6-12); --reseed will
+    # force seed.
+    build_mode: seed
     # _for_ci/* branches: ci-base-layer fixes merged AFTER the development
     # sync + format pass, BEFORE bleeding-edge rebuilds from ci-base.
     # Same logical-conflict abort gates as _for_bleed (pyproject.toml,

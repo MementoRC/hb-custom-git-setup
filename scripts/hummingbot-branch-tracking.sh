@@ -2901,6 +2901,32 @@ get_tracked_branches() {
     echo "$result"
 }
 
+# Echoes the ci-base build mode: "seed" or "incremental".
+# Empty, null or missing build_mode means "seed". Any other value, or a yq
+# failure, is a fatal config error (returns 1; FATAL text goes to stderr).
+# Callers MUST check the return code, e.g.:
+#   mode="$(get_ci_base_build_mode)" || return 1
+# (an exit inside $() does not propagate to the caller).
+get_ci_base_build_mode() {
+    local mode
+    # Deliberately diverges from get_tracked_branches, which swallows yq errors:
+    # this value selects the build strategy, so a read failure must be fatal.
+    mode="$(yq -r '.target_branches["ci-base"].build_mode // "seed"' "$BRANCH_CONFIG")" || {
+        log_error "FATAL: cannot read ci-base build_mode from $BRANCH_CONFIG" >&2
+        return 1
+    }
+    [ -z "$mode" ] && mode="seed"
+    case "$mode" in
+        seed|incremental)
+            echo "$mode"
+            ;;
+        *)
+            log_error "FATAL: invalid ci-base build_mode '$mode' in $BRANCH_CONFIG (expected 'seed' or 'incremental')" >&2
+            return 1
+            ;;
+    esac
+}
+
 get_branch_parent() {
     local target="$1"
     local branch="$2"
