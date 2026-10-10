@@ -3295,7 +3295,28 @@ gate_and_push_branch() {
       fi
 }
 
+# Parses CLI flags into the globals REBUILD_MODE and FORCE_RESEED.
+#   (none)      cron/incremental run: REBUILD_MODE=false FORCE_RESEED=false
+#   --rebuild   REBUILD_MODE=true
+#   --reseed    implies --rebuild and sets FORCE_RESEED=true
+# Unknown arguments are an error (rc 1); the only caller, the cron wrapper, passes none.
+parse_args() {
+    REBUILD_MODE=false
+    FORCE_RESEED=false
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --rebuild) REBUILD_MODE=true ;;
+            --reseed)  REBUILD_MODE=true; FORCE_RESEED=true ;;
+            *) log_error "Unknown argument: $arg" >&2; return 1 ;;
+        esac
+    done
+    return 0
+}
+
 main() {
+  parse_args "$@" || exit 1
+
   log_header "$(colorize "$BLUE" "Branch Tracking")"
 
   ensure_directories
@@ -3319,7 +3340,6 @@ main() {
       exit 1
   fi
 
-  REBUILD_MODE=false
   # Gate state hoisted: the ci-base gate now runs inside the rebuild block (Step 1c),
   # before the tier loop below re-uses the same vars.
   local _pixi_cmd="" _gate_branch
@@ -3327,8 +3347,7 @@ main() {
   local _gate_failed=false
   local CI_BASE_ALREADY_GATED=false
 
-  if [ "$1" = "--rebuild" ]; then
-      REBUILD_MODE=true
+  if [ "$REBUILD_MODE" = "true" ]; then
       # pixi.lock churn from pixi solves is transient in this rebuild-output tree; discard
       # it so the clean-state gate and the rebuild's branch checkouts do not abort.
       git -C "$REPO_PATH" checkout -- pixi.lock 2>/dev/null || true
