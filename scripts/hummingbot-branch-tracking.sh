@@ -273,6 +273,21 @@ handle_new_files() {
     return 0
 }
 
+# commit_if_changed <msg> [extra git-commit args...]
+# Commits the INDEX only when something is staged; an empty index is a logged
+# no-op (rc 0) instead of a "nothing to commit" failure. Extra args (-S,
+# --no-verify, -m <body>, ...) pass through verbatim. Commit failures are NOT
+# swallowed: git's rc is returned. Log goes to stderr (log_* print to stdout).
+commit_if_changed() {
+    local msg="$1"
+    shift
+    if git diff --cached --quiet; then
+        log_operation "Skipped empty commit (nothing staged): $msg" >&2
+        return 0
+    fi
+    git commit -m "$msg" "$@"
+}
+
 ###############################################################################
 # Post-Build ci-base Purity Assertion (--rebuild only)
 # -------------------------------------------------------
@@ -724,7 +739,7 @@ pin_aiomqtt_transport() {
         # commit fails (observed 2026-08-27: `fatal: Unable to create index.lock`
         # from a concurrent git process, yet the log claimed the bleeding-edge pin
         # was committed — it was not, and the tier shipped without the pin).
-        if git commit -S --no-verify -m "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" \
+        if commit_if_changed "pin: aiomqtt remote_iface transport + drop commlib-py (${tier})" -S --no-verify \
             -m "Override commlib ancestry-drag: tracked branches carry strip-aiomqtt-seed's commlib mqtt.py and would silently re-inject it on merge. Pin the transport files from origin/development (upstream aiomqtt, PR #8293). Also strip commlib-py from pixi deps — mutually exclusive with aiomqtt via paho-mqtt; unused after the aiomqtt transport pin - and ensure aiomqtt >=2.0.0 is declared, so the pinned transport's dependency is never left to a separate tracked branch."; then
             echo "[pin-aiomqtt] committed aiomqtt transport pin (tier: ${tier})"
         else
@@ -777,9 +792,15 @@ build_ci_base_from_seed() {
     local pre_sync_sha
     pre_sync_sha=$(git rev-parse HEAD)
 
-    # Merge development on top of SEED
+    # Merge development on top of SEED. The Dev-Merged trailer records the exact
+    # development SHA merged (incremental mode reads it). Never a fast-forward:
+    # the seed carries ci-base commits development lacks, so a merge commit
+    # always exists to carry the trailer (clean path here, conflict path below).
+    local dev_sha
+    dev_sha=$(git rev-parse "origin/$DEVELOPMENT_BRANCH")
     if git merge --no-verify "origin/$DEVELOPMENT_BRANCH" \
-           -m "Sync $base_branch with $DEVELOPMENT_BRANCH (seed-based rebuild)" >& /dev/null; then
+           -m "Sync $base_branch with $DEVELOPMENT_BRANCH (seed-based rebuild)" \
+           -m "Dev-Merged: $dev_sha" >& /dev/null; then
         log_operation "Merged origin/$DEVELOPMENT_BRANCH cleanly onto $seed_tag"
     else
         # Conflict classification: same logic as sync_base_branch
@@ -811,7 +832,11 @@ build_ci_base_from_seed() {
             git checkout --theirs "$f" 2>/dev/null
             git add "$f"
         done
-        git commit --no-verify --no-edit >& /dev/null || {
+        # Explicit -m (not --no-edit): MERGE_MSG may carry "# Conflicts:" lines
+        # after the trailer, which would push it out of the final paragraph.
+        git commit --no-verify \
+            -m "Sync $base_branch with $DEVELOPMENT_BRANCH (seed-based rebuild)" \
+            -m "Dev-Merged: $dev_sha" >& /dev/null || {
             log_error "Failed to commit format-only conflict resolution"
             git merge --abort 2>/dev/null
             return 1
@@ -1044,7 +1069,7 @@ open(path, "w").write(c)
 PYEOF
         if ! git diff --quiet pyproject.toml; then
             git add pyproject.toml
-            git commit --no-verify -m 'fix(ruff): inject external=["mock"] to suppress # noqa: mock warnings' >/dev/null 2>&1 \
+            commit_if_changed 'fix(ruff): inject external=["mock"] to suppress # noqa: mock warnings' --no-verify >/dev/null 2>&1 \
                 && log_operation "Injected external=[\"mock\"] into [tool.ruff.lint]" \
                 || log_warning "Failed to commit ruff external=[\"mock\"] fix"
         else
@@ -1093,7 +1118,7 @@ PYEOF
         $final_ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
         if ! git diff --quiet -- hummingbot test controllers scripts ':!sub-packages' 2>/dev/null; then
             git add -- hummingbot test controllers scripts ':!sub-packages'
-            git commit --no-verify -m "style: final ruff format + import sort after _for_ci merges (ci-base compliance)" >& /dev/null
+            commit_if_changed "style: final ruff format + import sort after _for_ci merges (ci-base compliance)" --no-verify >& /dev/null
             log_operation "Final ruff normalization after _for_ci merges"
         else
             log_operation "Final ruff normalization: no changes needed"
@@ -3158,8 +3183,9 @@ gate_and_push_branch() {
               if [[ "$_gate_branch" != "overlay" ]]; then
                   if ! git -C "$REPO_PATH" diff --quiet; then
                       git -C "$REPO_PATH" add -A -- . ':!sub-packages'
-                      git -C "$REPO_PATH" -c commit.gpgsign=false commit --no-verify \
-                          -m "style: pre-push CI-gate autofix on $_gate_branch" >> "$_quality_log" 2>&1
+                      # --no-gpg-sign == the former `-c commit.gpgsign=false`.
+                      ( cd "$REPO_PATH" && commit_if_changed "style: pre-push CI-gate autofix on $_gate_branch" \
+                          --no-gpg-sign --no-verify ) >> "$_quality_log" 2>&1
                   fi
               fi
               _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
@@ -3202,7 +3228,7 @@ gate_and_push_branch() {
               return 1
           fi
       fi
-      ( cd "$REPO_PATH" && git add pixi.lock && { git diff --cached --quiet || git commit -S --no-verify -m "chore(lock): pin pixi.lock ($_gate_branch)"; } )
+      ( cd "$REPO_PATH" && git add pixi.lock && commit_if_changed "chore(lock): pin pixi.lock ($_gate_branch)" -S --no-verify )
 
       if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci build ) >& "$RUN_LOG_DIR/gate_build_${_gate_branch}.log"; then
           log_error "  Build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci build — see $RUN_LOG_DIR/gate_build_${_gate_branch}.log"
