@@ -763,6 +763,81 @@ pin_aiomqtt_transport() {
     fi
 }
 
+# Seed tag ci-base is built from (seed mode) and must descend from (incremental).
+CI_BASE_SEED_TAG="${CI_BASE_SEED_TAG:-ci-base-seed-v5}"
+
+###############################################################################
+# Incremental ci-base preconditions (read-only; remote-tracking refs only)
+# Verifies origin/ci-base is a sane base for an incremental development merge.
+# On success sets CI_BASE_LAST_DEV_MERGED to the full sha of the development
+# commit last merged into origin/ci-base (from its Dev-Merged trailer).
+# Operates on the current directory's repository, like build_ci_base_from_seed.
+###############################################################################
+ci_base_incremental_preconditions() {
+    local dev_ref="origin/${DEVELOPMENT_BRANCH:-development}"
+    CI_BASE_LAST_DEV_MERGED=""
+
+    git rev-parse --verify --quiet "origin/ci-base^{commit}" >/dev/null || {
+        log_error "FATAL: origin/ci-base does not exist — run --reseed"
+        return 1
+    }
+    git rev-parse --verify --quiet "$dev_ref^{commit}" >/dev/null || {
+        log_error "FATAL: $dev_ref does not exist"
+        return 1
+    }
+
+    local seed_sha
+    seed_sha=$(git rev-parse --verify --quiet "refs/tags/$CI_BASE_SEED_TAG^{commit}") || {
+        log_error "FATAL: tag $CI_BASE_SEED_TAG not found"
+        return 1
+    }
+    git merge-base --is-ancestor "$seed_sha" origin/ci-base || {
+        log_error "FATAL: $CI_BASE_SEED_TAG is not an ancestor of origin/ci-base — run --reseed"
+        return 1
+    }
+
+    local carrier dev_merged
+    carrier=$(git log --first-parent -1 --grep='^Dev-Merged: ' --format=%H origin/ci-base)
+    if [ -n "$carrier" ]; then
+        dev_merged=$(git log -1 --format='%(trailers:key=Dev-Merged,valueonly)' "$carrier" \
+            | sed -n '/./{p;q}' | tr -d '[:space:]')
+    fi
+    if [ -z "${dev_merged:-}" ]; then
+        log_error "FATAL: no Dev-Merged trailer on origin/ci-base first-parent history — run --reseed"
+        return 1
+    fi
+
+    local d_sha
+    d_sha=$(git rev-parse --verify --quiet "${dev_merged}^{commit}") || {
+        log_error "FATAL: Dev-Merged commit $dev_merged is not a valid commit — run --reseed"
+        return 1
+    }
+    git merge-base --is-ancestor "$d_sha" "$dev_ref" || {
+        log_error "FATAL: Dev-Merged $d_sha is not an ancestor of $dev_ref (upstream history rewritten) — run --reseed"
+        return 1
+    }
+
+    local mb
+    mb=$(git merge-base origin/ci-base "$dev_ref") || {
+        log_error "FATAL: no merge-base between origin/ci-base and $dev_ref — run --reseed"
+        return 1
+    }
+    git merge-base --is-ancestor "$d_sha" "$mb" || {
+        log_error "FATAL: Dev-Merged $d_sha is newer than merge-base $mb of origin/ci-base and $dev_ref — run --reseed"
+        return 1
+    }
+
+    if ! git rev-parse --verify --quiet "origin/modular^{commit}" >/dev/null \
+        || ! git merge-base --is-ancestor origin/ci-base origin/modular; then
+        log_warning "WARNING: origin/ci-base is not an ancestor of origin/modular (or modular missing)"
+    fi
+
+    CI_BASE_LAST_DEV_MERGED="$d_sha"
+    export CI_BASE_LAST_DEV_MERGED
+    log_operation "ci-base incremental preconditions OK: last Dev-Merged ${d_sha:0:12}"
+    return 0
+}
+
 ###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
@@ -779,7 +854,7 @@ build_ci_base_from_seed() {
 
     # Prerequisite: seed tag must exist (fetch tags from origin first)
     git fetch origin --tags >/dev/null 2>&1 || true
-    local seed_tag="ci-base-seed-v5"
+    local seed_tag="$CI_BASE_SEED_TAG"
     local seed_sha
     seed_sha=$(git rev-parse --verify "refs/tags/$seed_tag" 2>/dev/null) || {
         log_error "FATAL: tag $seed_tag not found — create it first (see ci-base-clean-rebuild-plan.md Prerequisites)"
