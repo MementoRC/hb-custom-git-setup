@@ -61,6 +61,15 @@ _finish_manual_rebuild_summary() {
     local _tracking="success"
     [ "$_rc" -ne 0 ] && _tracking="failed"
     write_run_summary "$MANUAL_REBUILD_SUMMARY" "$_rc" "n/a" "$_tracking" "n/a" "(stdout)"
+    # Appended after write_run_summary (which overwrites), same as the cron
+    # wrapper's detail blocks. Artifact written by sync_modular_branch.
+    if [ -s "$RUN_LOG_DIR/modular_classifier_counts.txt" ]; then
+        {
+            echo ""
+            echo "Modular merge classifiers:"
+            sed 's/^/  /' "$RUN_LOG_DIR/modular_classifier_counts.txt"
+        } >> "$MANUAL_REBUILD_SUMMARY"
+    fi
     return 0
 }
 
@@ -87,6 +96,11 @@ TEMP_LOG="${TEMP_DIR}/test_output.log"
 ###############################################################################
 FAILED_MERGES=()
 ATTEMPTED_MERGES=0
+
+# Per-classifier conflict counts for the ci-base -> modular merge (incremental
+# plan D3). Reset and filled by sync_modular_branch(), derived from its
+# existing *_count locals; flushed to $RUN_LOG_DIR/modular_classifier_counts.txt.
+declare -A MODULAR_CLASSIFIER_COUNTS=()
 
 ###############################################################################
 # Parent-failure cascade tracking
@@ -1514,11 +1528,47 @@ branch_reverts_upstream_content() {
     [ "$UPSTREAM_LOSS_COUNT" -gt 0 ] 2>/dev/null
 }
 
+# format_modular_classifier_summary <assoc_array_name>
+# Prints one "modular-merge classifier: <name>=<n>" line per key (C-locale
+# sorted, zero counts included) and a final "modular-merge classifier total=<n>".
+format_modular_classifier_summary() {
+    local -n _mcs_counts="$1"
+    local _mcs_key _mcs_val _mcs_total=0
+    while IFS= read -r _mcs_key; do
+        [ -n "$_mcs_key" ] || continue
+        _mcs_val="${_mcs_counts[$_mcs_key]:-0}"
+        printf 'modular-merge classifier: %s=%d\n' "$_mcs_key" "$_mcs_val"
+        _mcs_total=$((_mcs_total + _mcs_val))
+    done < <(printf '%s\n' "${!_mcs_counts[@]}" | LC_ALL=C sort)
+    printf 'modular-merge classifier total=%d\n' "$_mcs_total"
+}
+
+# record_modular_classifier_counts [reason]
+# With a reason: writes "total=0 (<reason>)" (no classified merge happened).
+# Without: writes the per-classifier lines from MODULAR_CLASSIFIER_COUNTS.
+record_modular_classifier_counts() {
+    local reason="${1:-}" out="$RUN_LOG_DIR/modular_classifier_counts.txt" line
+    if [ -n "$reason" ]; then
+        printf 'modular-merge classifier total=0 (%s)\n' "$reason" > "$out"
+    else
+        format_modular_classifier_summary MODULAR_CLASSIFIER_COUNTS > "$out"
+    fi
+    while IFS= read -r line; do log_detail "  $line"; done < "$out"
+}
+
 sync_modular_branch() {
     local modular_branch="$1"
     local base_branch="$2"
 
     log_section "Merging $base_branch into $modular_branch"
+
+    MODULAR_CLASSIFIER_COUNTS=(
+        ["format-only"]=0 ["ci-base-subset"]=0 ["modular-subset"]=0
+        ["modular-owned"]=0 ["style-only-region"]=0 ["generated-file"]=0
+    )
+    # Placeholder until a merge outcome is known; left as-is on every failure path.
+    printf 'modular-merge classifier total=0 (no conflict resolution completed)\n' \
+        > "$RUN_LOG_DIR/modular_classifier_counts.txt"
 
     # Check out modular (create from base_branch tip if it doesn't exist yet)
     if git show-ref --verify --quiet "refs/heads/$modular_branch"; then
@@ -1542,6 +1592,7 @@ sync_modular_branch() {
 
         if git merge-base --is-ancestor "$base_branch" "$modular_branch" 2>/dev/null; then
             log_operation "$modular_branch already up to date with $base_branch — no merge needed"
+            record_modular_classifier_counts "already up to date, no merge"
         else
             # Merge ci-base into modular preserving modular's own commit history.
             # Skip pre-commit hooks for script-internal merge; gpg-signing handled by agent.
@@ -1549,6 +1600,7 @@ sync_modular_branch() {
                    "$base_branch" \
                    -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
                 log_operation "Merged $base_branch into $modular_branch"
+                record_modular_classifier_counts
             else
                 # Classify conflicts: logical → abort, format-only → auto-resolve
                 # (keep ci-base), ci-base-subset → auto-resolve (keep modular).
@@ -1634,6 +1686,13 @@ sync_modular_branch() {
                     return 1
                 }
                 log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions), $generated_count generated-file conflicts resolved (took ci-base))"
+                MODULAR_CLASSIFIER_COUNTS["format-only"]=$format_only_count
+                MODULAR_CLASSIFIER_COUNTS["ci-base-subset"]=$subset_count
+                MODULAR_CLASSIFIER_COUNTS["modular-subset"]=$modular_subset_count
+                MODULAR_CLASSIFIER_COUNTS["modular-owned"]=$owned_count
+                MODULAR_CLASSIFIER_COUNTS["style-only-region"]=$style_region_count
+                MODULAR_CLASSIFIER_COUNTS["generated-file"]=$generated_count
+                record_modular_classifier_counts
             fi
         fi
     else
@@ -1649,6 +1708,7 @@ sync_modular_branch() {
             return 1
         }
         log_operation "$modular_branch created from $base_branch tip ($base_tip)"
+        record_modular_classifier_counts "modular created from $base_branch tip, no merge"
     fi
 
     # Merge modular tracked_branches — sub-package wiring branches.

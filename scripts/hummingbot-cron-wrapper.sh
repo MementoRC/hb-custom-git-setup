@@ -807,6 +807,15 @@ if [ "$MERGE_FAILURES" -gt 0 ] 2>/dev/null; then
     } >> "$SUMMARY_FILE"
 fi
 
+# Append modular-merge classifier counts (artifact written by sync_modular_branch).
+if [ -s "$RUN_LOG_DIR/modular_classifier_counts.txt" ]; then
+    {
+        echo ""
+        echo "Modular merge classifiers:"
+        sed 's/^/  /' "$RUN_LOG_DIR/modular_classifier_counts.txt"
+    } >> "$SUMMARY_FILE"
+fi
+
 # Display summary
 echo ""
 cat "$SUMMARY_FILE"
