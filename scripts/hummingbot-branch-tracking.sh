@@ -1197,6 +1197,64 @@ build_ci_base_from_seed() {
     return 0
 }
 
+###############################################################################
+# Build ci-base INCREMENTALLY (--rebuild with build_mode: incremental)
+# ---------------------------------------------------------------------
+# Resets ci-base to origin/ci-base, merges new origin/development commits on
+# top (merge_development_incremental), then reverts _for_ci merges whose branch
+# was disabled/removed (revert_retired_for_ci_merges). Sets SEED_PRE_SYNC_SHA
+# (global, same contract as build_ci_base_from_seed) to the pre-merge HEAD so
+# the downstream py312/format scoping works unchanged.
+###############################################################################
+build_ci_base_incremental() {
+    local base_branch="ci-base"
+
+    git fetch origin "$base_branch" "$DEVELOPMENT_BRANCH" >/dev/null 2>&1 || true
+
+    ci_base_incremental_preconditions || {
+        log_error "Incremental ci-base preconditions failed — aborting (run --reseed if the message says so)"
+        return 1
+    }
+    log_operation "Incremental anchor: origin/$base_branch (last Dev-Merged ${CI_BASE_LAST_DEV_MERGED:0:12})"
+
+    git checkout "$base_branch" >& /dev/null || {
+        log_error "Cannot checkout $base_branch"
+        return 1
+    }
+    git reset --hard "origin/$base_branch" >/dev/null || {
+        log_error "Failed to reset $base_branch to origin/$base_branch"
+        return 1
+    }
+    log_operation "Reset $base_branch to origin/$base_branch"
+
+    # Capture pre-merge SHA for scoped format/transform pass (global, not stdout:
+    # see the note at the end of build_ci_base_from_seed).
+    local pre_sync_sha
+    pre_sync_sha=$(git rev-parse HEAD)
+
+    merge_development_incremental || {
+        log_error "Incremental development merge failed"
+        return 1
+    }
+    revert_retired_for_ci_merges || {
+        log_error "Reverting retired _for_ci merges failed"
+        return 1
+    }
+
+    SEED_PRE_SYNC_SHA="$pre_sync_sha"
+    return 0
+}
+
+# Echoes which ci-base builder a --rebuild run uses: "seed" or "incremental".
+# $1 = build_mode from get_ci_base_build_mode; FORCE_RESEED=true forces seed.
+select_ci_base_builder() {
+    if [ "${FORCE_RESEED:-false}" = "true" ] || [ "$1" != "incremental" ]; then
+        echo seed
+    else
+        echo incremental
+    fi
+}
+
 sync_base_branch() {
     local base_branch="$1"
 
@@ -1235,7 +1293,14 @@ sync_base_branch() {
         # SEED-based rebuild: start from fixed anchor, merge development.
         # build_ci_base_from_seed returns the pre-merge SHA via the SEED_PRE_SYNC_SHA
         # global (not stdout) so its log output cannot corrupt the captured value.
-        build_ci_base_from_seed "$base_branch" || return 1
+        # build_mode: incremental (without --reseed) uses build_ci_base_incremental.
+        local ci_build_mode
+        ci_build_mode="$(get_ci_base_build_mode)" || return 1
+        if [ "$(select_ci_base_builder "$ci_build_mode")" = "incremental" ]; then
+            build_ci_base_incremental || return 1
+        else
+            build_ci_base_from_seed "$base_branch" || return 1
+        fi
         pre_sync_sha="$SEED_PRE_SYNC_SHA"
     else
         # Incremental cron: reset to origin tip, patch new development commits
