@@ -981,6 +981,115 @@ revert_retired_for_ci_merges() {
 }
 
 ###############################################################################
+# merge_development_incremental   (mutating; operates on the checked-out HEAD)
+# Merges origin/${DEVELOPMENT_BRANCH:-development} into HEAD (ci-base, already
+# reset to origin/ci-base by the caller). Commit: subject "Sync ci-base with
+# development (incremental)" + "Dev-Merged: <full sha>" trailer (same format as
+# build_ci_base_from_seed). No-op (return 0) if development is already merged.
+# Conflict policy, every path checked BEFORE any is resolved:
+#   1. pyproject.toml|conftest.py|.github/*|test/conftest.py -> abort
+#      (case list duplicated from build_ci_base_from_seed, not shared)
+#      .pre-commit-config.yaml -> ours
+#   2. path owned by a _for_ci/* merge (compute_for_ci_owned, pre-merge) -> abort
+#   3. anything else -> development's side (content/add-add: theirs; deleted by
+#      development: git rm; deleted by ci-base: re-add development's version);
+#      recorded in ${RUN_LOG_DIR:-/tmp}/incremental_taken_dev.txt
+# Abort = merge --abort + reset --hard to the starting HEAD, return 1.
+###############################################################################
+merge_development_incremental() {
+    local dev_ref="origin/${DEVELOPMENT_BRANCH:-development}"
+    local start_sha d_new
+    start_sha="$(git rev-parse --verify HEAD)" || {
+        log_error "FATAL: cannot resolve HEAD"
+        return 1
+    }
+    d_new="$(git rev-parse --verify --quiet "$dev_ref^{commit}")" || {
+        log_error "FATAL: $dev_ref does not exist"
+        return 1
+    }
+    if git merge-base --is-ancestor "$d_new" HEAD; then
+        log_operation "development already merged (${d_new:0:12}) — nothing to do"
+        return 0
+    fi
+
+    local taken_log="${RUN_LOG_DIR:-/tmp}/incremental_taken_dev.txt"
+    : > "$taken_log"
+
+    local owned
+    owned="$(compute_for_ci_owned HEAD)" || return 1
+
+    local merge_kind="clean"
+    local -a conflicts=() ours_paths=() dev_paths=()
+    local f
+    if ! git merge --no-ff --no-commit --no-verify "$d_new" >/dev/null 2>&1; then
+        merge_kind="conflicted"
+        while IFS= read -r f; do
+            [ -n "$f" ] && conflicts+=("$f")
+        done < <(git -c core.quotepath=off diff --name-only --diff-filter=U)
+
+        if [ "${#conflicts[@]}" -eq 0 ]; then
+            git merge --abort >/dev/null 2>&1
+            git reset -q --hard "$start_sha"
+            log_error "Merge of $dev_ref failed without conflicts (unrelated histories?) — aborted"
+            return 1
+        fi
+
+        for f in "${conflicts[@]}"; do
+            case "$f" in
+                .pre-commit-config.yaml)
+                    ours_paths+=("$f") ;;
+                pyproject.toml|conftest.py|.github/*|test/conftest.py)
+                    git merge --abort >/dev/null 2>&1
+                    git reset -q --hard "$start_sha"
+                    log_error "Incremental merge aborted: $f conflicts (rule: logical-conflict path list) — manual resolution needed"
+                    return 1 ;;
+                *)
+                    if printf '%s\n' "$owned" | grep -Fxq -- "$f"; then
+                        git merge --abort >/dev/null 2>&1
+                        git reset -q --hard "$start_sha"
+                        log_error "Incremental merge aborted: $f conflicts (rule: owned by a _for_ci/* branch) — manual resolution needed"
+                        return 1
+                    fi
+                    dev_paths+=("$f") ;;
+            esac
+        done
+
+        for f in "${ours_paths[@]}"; do
+            if git ls-files -u -- "$f" | awk '$3==2{f=1} END{exit !f}'; then
+                git checkout --ours -- "$f" && git add -- "$f"
+            else
+                git rm -q -f -- "$f"
+            fi
+        done
+        for f in "${dev_paths[@]}"; do
+            if git ls-files -u -- "$f" | awk '$3==3{f=1} END{exit !f}'; then
+                git checkout --theirs -- "$f" && git add -- "$f"
+            else
+                git rm -q -f -- "$f"
+            fi
+            printf '%s\n' "$f" >> "$taken_log"
+        done
+        if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+            git merge --abort >/dev/null 2>&1
+            git reset -q --hard "$start_sha"
+            log_error "Incremental merge aborted: conflicts remained after resolution"
+            return 1
+        fi
+    fi
+
+    git commit -q --no-verify \
+        -m "Sync ci-base with development (incremental)" \
+        -m "Dev-Merged: $d_new" >/dev/null 2>&1 || {
+        git merge --abort >/dev/null 2>&1
+        git reset -q --hard "$start_sha"
+        log_error "Failed to commit incremental development merge"
+        return 1
+    }
+    log_operation "Merged $dev_ref (${d_new:0:12}) incrementally: $merge_kind merge, ${#dev_paths[@]} path(s) taken from development"
+    return 0
+}
+
+###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
 # Starts ci-base from the ci-base-seed-v5 tag (a fixed, GPG-signed snapshot
