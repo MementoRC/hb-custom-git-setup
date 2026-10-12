@@ -839,6 +839,55 @@ ci_base_incremental_preconditions() {
 }
 
 ###############################################################################
+# compute_for_ci_owned [ref]   (read-only; default ref origin/ci-base)
+# Prints the sorted, unique set of paths currently owned by _for_ci/* merges
+# on the first-parent history of <ref> since $CI_BASE_SEED_TAG, one per line.
+# Merge event: first-parent merge with subject "Auto-merge _for_ci/<name> into
+# <base>" (the only subject merge_for_ci_branches produces, for clean and
+# conflict-resolved merges alike) adds the files it changed vs its first parent.
+# Revert event: a first-parent commit with a "Reverts-For-Ci: _for_ci/<name>"
+# trailer clears that name's files, so a later re-merge starts fresh.
+###############################################################################
+compute_for_ci_owned() {
+    local ref="${1:-origin/ci-base}"
+
+    git rev-parse --verify --quiet "refs/tags/$CI_BASE_SEED_TAG^{commit}" >/dev/null || {
+        log_error "FATAL: tag $CI_BASE_SEED_TAG not found"
+        return 1
+    }
+    git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || {
+        log_error "FATAL: $ref does not exist"
+        return 1
+    }
+
+    local -A owned=()
+    local sha parents subject revert rest name
+    while IFS= read -r -d $'\x1e' rest; do
+        rest="${rest#$'\n'}"
+        [ -z "$rest" ] && continue
+        IFS=$'\x1f' read -r sha parents subject revert <<< "$rest"
+        revert="$(printf '%s' "$revert" | tr -d '[:space:]')"
+        if [ -n "$revert" ]; then
+            unset "owned[$revert]"
+            continue
+        fi
+        case "$parents" in *" "*) ;; *) continue ;; esac
+        [[ "$subject" =~ ^Auto-merge\ (_for_ci/[^\ ]+)\ into\  ]] || continue
+        name="${BASH_REMATCH[1]}"
+        owned[$name]+="$(git -c core.quotepath=off diff --name-only "${sha}^1" "$sha")"$'\n'
+    done < <(git log --first-parent --reverse \
+        --format='%H%x1f%P%x1f%s%x1f%(trailers:key=Reverts-For-Ci,valueonly,separator=%x2c)%x1e' \
+        "refs/tags/$CI_BASE_SEED_TAG..$ref")
+
+    local files
+    for name in "${!owned[@]}"; do
+        files+="${owned[$name]}"
+    done
+    [ -n "${files:-}" ] && printf '%s' "$files" | sed '/^$/d' | LC_ALL=C sort -u
+    return 0
+}
+
+###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
 # Starts ci-base from the ci-base-seed-v5 tag (a fixed, GPG-signed snapshot
