@@ -888,6 +888,99 @@ compute_for_ci_owned() {
 }
 
 ###############################################################################
+# revert_retired_for_ci_merges   (mutating; operates on the checked-out HEAD)
+# Reverts the first-parent "Auto-merge _for_ci/<name> into <base>" merges (since
+# $CI_BASE_SEED_TAG, after the name's last Reverts-For-Ci event) of every name
+# that is active but no longer enabled in branch-tracking.yaml (disabled or
+# removed). One commit per retired name, subject "Revert retired <name> from
+# ci-base" + trailer "Reverts-For-Ci: <name>". Commit signing follows git config.
+# On a revert conflict: resets to the pre-call HEAD, logs, returns 1.
+###############################################################################
+revert_retired_for_ci_merges() {
+    local start_sha
+    start_sha="$(git rev-parse --verify HEAD)" || {
+        log_error "FATAL: cannot resolve HEAD"
+        return 1
+    }
+    git rev-parse --verify --quiet "refs/tags/$CI_BASE_SEED_TAG^{commit}" >/dev/null || {
+        log_error "FATAL: tag $CI_BASE_SEED_TAG not found"
+        return 1
+    }
+
+    local -A active=()
+    local sha parents subject revert rest name
+    while IFS= read -r -d $'\x1e' rest; do
+        rest="${rest#$'\n'}"
+        [ -z "$rest" ] && continue
+        IFS=$'\x1f' read -r sha parents subject revert <<< "$rest"
+        revert="$(printf '%s' "$revert" | tr -d '[:space:]')"
+        if [ -n "$revert" ]; then
+            unset "active[$revert]"
+            continue
+        fi
+        case "$parents" in *" "*) ;; *) continue ;; esac
+        [[ "$subject" =~ ^Auto-merge\ (_for_ci/[^\ ]+)\ into\  ]] || continue
+        name="${BASH_REMATCH[1]}"
+        active[$name]+="$sha "
+    done < <(git log --first-parent --reverse \
+        --format='%H%x1f%P%x1f%s%x1f%(trailers:key=Reverts-For-Ci,valueonly,separator=%x2c)%x1e' \
+        "refs/tags/$CI_BASE_SEED_TAG..HEAD")
+
+    [ "${#active[@]}" -eq 0 ] && return 0
+
+    # Fail closed: an unreadable config must never read as "nothing enabled".
+    [ -f "$BRANCH_CONFIG" ] || {
+        log_error "FATAL: branch config not found: $BRANCH_CONFIG"
+        return 1
+    }
+    local enabled_list
+    enabled_list="$(get_enabled_for_ci_branches)" || {
+        log_error "FATAL: cannot read enabled _for_ci branches from $BRANCH_CONFIG"
+        return 1
+    }
+    if [ -z "$enabled_list" ]; then
+        log_error "refusing to revert all ${#active[@]} active _for_ci branches: enabled list is empty"
+        return 1
+    fi
+    local -A enabled=()
+    while IFS= read -r name; do
+        [ -n "$name" ] && enabled[$name]=1
+    done <<< "$enabled_list"
+
+    local retired=() count=0
+    for name in "${!active[@]}"; do
+        [ -n "${enabled[$name]:-}" ] || retired+=("$name")
+    done
+    [ "${#retired[@]}" -eq 0 ] && return 0
+
+    local -a shas
+    local i conflicts
+    while IFS= read -r name; do
+        read -r -a shas <<< "${active[$name]}"
+        for ((i = ${#shas[@]} - 1; i >= 0; i--)); do
+            if ! git revert -m 1 --no-commit "${shas[$i]}" >/dev/null 2>&1; then
+                conflicts="$(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+                git revert --abort >/dev/null 2>&1
+                git reset -q --hard "$start_sha"
+                log_error "Revert of retired $name merge ${shas[$i]:0:12} conflicted: ${conflicts:-unknown paths}"
+                return 1
+            fi
+        done
+        git commit -q --allow-empty --no-verify \
+            -m "Revert retired $name from ci-base" -m "Reverts-For-Ci: $name" >/dev/null 2>&1 || {
+            git reset -q --hard "$start_sha"
+            log_error "Commit of retired $name revert failed"
+            return 1
+        }
+        log_operation "Reverted retired $name (${#shas[@]} merge(s))"
+        count=$((count + 1))
+    done < <(printf '%s\n' "${retired[@]}" | LC_ALL=C sort)
+
+    log_operation "Reverted $count retired _for_ci branch(es) from ci-base"
+    return 0
+}
+
+###############################################################################
 # Build ci-base from SEED (--rebuild only)
 # -----------------------------------------
 # Starts ci-base from the ci-base-seed-v5 tag (a fixed, GPG-signed snapshot
@@ -2240,12 +2333,19 @@ take_merge_stage() {
     return $rc
 }
 
+# Echoes the enabled ci-base _for_ci/* branch names, one per line, in yaml order.
+# A missing `enabled` key counts as NOT enabled. Shared by merge_for_ci_branches
+# and revert_retired_for_ci_merges so both agree on what is "enabled".
+get_enabled_for_ci_branches() {
+    yq -r '.target_branches["ci-base"].tracked_branches // [] | .[] | select(.enabled == true) | .name' "$BRANCH_CONFIG" 2>/dev/null
+}
+
 merge_for_ci_branches() {
     local base_branch="$1"
 
     # Read branches from YAML; skip if none configured
     local for_ci_branches
-    for_ci_branches="$(yq -r '.target_branches["ci-base"].tracked_branches // [] | .[] | select(.enabled == true) | .name' "$BRANCH_CONFIG" 2>/dev/null)"
+    for_ci_branches="$(get_enabled_for_ci_branches)"
     if [ -z "$for_ci_branches" ]; then
         log_operation "No _for_ci/* branches configured — skipping"
         return 0
