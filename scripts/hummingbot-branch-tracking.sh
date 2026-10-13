@@ -2190,6 +2190,64 @@ sync_overlay_branch() {
 }
 
 ###############################################################################
+# branch_content_present_in_head <ref>
+# ------------------------------------
+# Returns 0 only if every path the branch changed since its merge-base with
+# HEAD has the same blob at HEAD as at <ref> (a path deleted in <ref> must be
+# absent at HEAD). An empty index diff after conflict resolution does NOT prove
+# this: a merge that refused to start (e.g. untracked files would be
+# overwritten) also leaves index == HEAD, and the 2026-10-13 seed rebuild
+# silently dropped _for_ci/lint-residual that way. On mismatch, sets
+# NOOP_GUARD_MISMATCH to the first (up to 5) offending paths, one per line.
+###############################################################################
+branch_content_present_in_head() {
+    local ref="$1" mb path head_blob ref_blob
+    NOOP_GUARD_MISMATCH=""
+    mb="$(git merge-base HEAD "$ref" 2>/dev/null)"
+    if [ -z "$mb" ]; then
+        NOOP_GUARD_MISMATCH="(no merge-base between HEAD and $ref)"
+        return 1
+    fi
+    local count=0
+    while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        head_blob="$(git rev-parse -q --verify "HEAD:$path" 2>/dev/null || true)"
+        ref_blob="$(git rev-parse -q --verify "$ref:$path" 2>/dev/null || true)"
+        if [ "$head_blob" != "$ref_blob" ]; then
+            count=$((count + 1))
+            if [ "$count" -le 5 ]; then
+                if [ -n "$NOOP_GUARD_MISMATCH" ]; then
+                    NOOP_GUARD_MISMATCH+=$'\n'
+                fi
+                NOOP_GUARD_MISMATCH+="$path"
+            fi
+        fi
+    done < <(git -c core.quotepath=false diff --name-only "$mb" "$ref" 2>/dev/null)
+    [ "$count" -eq 0 ]
+}
+
+# noop_guard_abort <branch> <merge_log>
+# Called when the index equals HEAD after resolution but the branch content is
+# NOT in HEAD. Logs the failure (including the captured merge stderr and whether
+# the merge ever started), aborts any in-progress merge, and sets
+# NOOP_GUARD_REASON for the caller's FAILED_MERGES entry.
+noop_guard_abort() {
+    local branch="$1" merge_log="$2" started=true
+    git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || started=false
+    if [ "$started" = true ]; then
+        NOOP_GUARD_REASON="resolution netted to no-op but branch content missing from HEAD: $(echo "$NOOP_GUARD_MISMATCH" | tr '\n' ' ')"
+    else
+        NOOP_GUARD_REASON="merge never started (no MERGE_HEAD) and branch content missing from HEAD: $(echo "$NOOP_GUARD_MISMATCH" | tr '\n' ' ')"
+        log_error "git merge of $branch failed with no MERGE_HEAD — it never started"
+    fi
+    log_error "$branch NOT merged: $NOOP_GUARD_REASON"
+    log_error "git merge output: $(head -c 600 "$merge_log" 2>/dev/null | tr '\n' ' ')"
+    if [ "$started" = true ]; then
+        git merge --abort >& /dev/null
+    fi
+}
+
+###############################################################################
 # Modular Tracked-Branch Merge Pass
 # ----------------------------------
 # Merges branches listed under target_branches.modular.tracked_branches into
@@ -2314,9 +2372,19 @@ merge_for_modular_branches() {
                 # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
                 # and — without this guard — abort the whole rebuild. Abort the in-progress
                 # merge and move on: the base already has the content.
-                rm -f "$merge_log"
-                git merge --abort >& /dev/null
-                log_result true "$branch content already present — no-op, skipped"
+                if branch_content_present_in_head "$ref"; then
+                    rm -f "$merge_log"
+                    git merge --abort >& /dev/null
+                    log_result true "$branch content already present — no-op, skipped"
+                else
+                    noop_guard_abort "$branch" "$merge_log"
+                    log_merge_failure "$merge_log" "$conflict_files"
+                    FAILED_MERGES+=("$branch -> $modular_branch")
+                    FAILED_MERGES+=("  $NOOP_GUARD_REASON")
+                    mark_branch_not_landed "modular" "$branch"
+                    rm -f "$merge_log"
+                    return 1
+                fi
             else
                 if git commit --no-verify --no-edit >& /dev/null; then
                     rm -f "$merge_log"
@@ -2703,9 +2771,19 @@ merge_for_ci_branches() {
                 # diff check. A plain `git commit` here would exit 1 ("nothing to commit")
                 # and — without this guard — abort the whole rebuild. Abort the in-progress
                 # merge and move on: the base already has the content.
-                rm -f "$merge_log"
-                git merge --abort >& /dev/null
-                log_result true "$branch content already present — no-op, skipped"
+                if branch_content_present_in_head "$ref"; then
+                    rm -f "$merge_log"
+                    git merge --abort >& /dev/null
+                    log_result true "$branch content already present — no-op, skipped"
+                else
+                    noop_guard_abort "$branch" "$merge_log"
+                    log_merge_failure "$merge_log" "$conflict_files"
+                    FAILED_MERGES+=("$branch -> $base_branch")
+                    FAILED_MERGES+=("  $NOOP_GUARD_REASON")
+                    mark_branch_not_landed "$base_branch" "$branch"
+                    rm -f "$merge_log"
+                    return 1
+                fi
             else
                 if git commit --no-verify --no-edit >& /dev/null; then
                     rm -f "$merge_log"
