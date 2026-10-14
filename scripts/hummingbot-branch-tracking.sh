@@ -1312,6 +1312,8 @@ sync_base_branch() {
 
     local pre_sync_sha
     local ci_builder="seed"
+    # Read by gate_and_push_branch -> push_ci_base (Task 12) to pick the push policy.
+    CI_BASE_BUILD_MODE_USED="seed"
 
     if [ "$REBUILD_MODE" = "true" ]; then
         # SEED-based rebuild: start from fixed anchor, merge development.
@@ -1322,6 +1324,7 @@ sync_base_branch() {
         ci_build_mode="$(get_ci_base_build_mode)" || return 1
         if [ "$(select_ci_base_builder "$ci_build_mode")" = "incremental" ]; then
             ci_builder="incremental"
+            CI_BASE_BUILD_MODE_USED="incremental"
             build_ci_base_incremental || return 1
         else
             build_ci_base_from_seed "$base_branch" || return 1
@@ -3720,6 +3723,20 @@ is_branch_feature_only() {
 # the tier loop for everything else. 0 = gated green + pushed, 1 = failed; the
 # caller decides whether to abort or continue. Caller must resolve $_pixi_cmd.
 # ----------------------------------------------------------------------------
+push_ci_base() {
+    local mode="$1"
+    if [ "$mode" = "incremental" ]; then
+        # Incremental ci-base only ever appends to origin/ci-base: a plain push,
+        # never forced. Rejection means origin moved (a bug signal) — fail, don't force.
+        if git -C "$REPO_PATH" push origin ci-base >& /dev/null; then
+            return 0
+        fi
+        log_error "  incremental ci-base push rejected (non-fast-forward): origin/ci-base moved; NOT forcing" >&2
+        return 1
+    fi
+    git -C "$REPO_PATH" push origin ci-base --force-with-lease >& /dev/null
+}
+
 gate_and_push_branch() {
     local _gate_branch="$1"
     local _changed _q_ok _quality_log _pr_script
@@ -3878,7 +3895,18 @@ gate_and_push_branch() {
           log_detail "  compile: pass (cargo build + build_ext + augmented DataProcessor)"
       fi
 
-      if git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+      local _push_hint="git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
+      local _push_ok=false
+      if [ "$_gate_branch" = "ci-base" ]; then
+          # push_ci_base logs its own rejection message, so it is not silenced here.
+          if [ "${CI_BASE_BUILD_MODE_USED:-seed}" = "incremental" ]; then
+              _push_hint="git -C \"$REPO_PATH\" push origin ci-base  (plain fast-forward; investigate origin/ci-base, do NOT force)"
+          fi
+          push_ci_base "${CI_BASE_BUILD_MODE_USED:-seed}" && _push_ok=true
+      elif git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+          _push_ok=true
+      fi
+      if [ "$_push_ok" = true ]; then
           log_result true "$_gate_branch gated green + pushed"
           # Refresh this layer's squashed single-commit review snapshot right
           # after it is pushed green, so each <branch>-pr reflects the latest
@@ -3895,7 +3923,7 @@ gate_and_push_branch() {
           fi
           return 0
       else
-          log_error "  push FAILED for $_gate_branch (gates passed) — run: git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
+          log_error "  push FAILED for $_gate_branch (gates passed) — run: $_push_hint"
           touch "$RUN_LOG_DIR/.gate_failed"
           return 1
       fi
