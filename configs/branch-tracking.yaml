@@ -31,14 +31,15 @@
 #   build_mode:                 (ci-base only) seed (default) | incremental (not yet implemented).
 #                               Selects how ci-base is rebuilt; --reseed forces seed.
 #
-# Last reviewed: 2026-07-07
+# Last reviewed: 2026-10-14
 
 target_branches:
   ci-base:
     # build_mode: "seed" (default) or "incremental". "incremental" is not
     # implemented yet (incremental ci-base plan Tasks 6-12); --reseed will
     # force seed.
-    build_mode: seed
+    # rollback: set build_mode: seed, or run --rebuild --reseed once
+    build_mode: incremental
     # _for_ci/* branches: ci-base-layer fixes merged AFTER the development
     # sync + format pass, BEFORE bleeding-edge rebuilds from ci-base.
     # Same logical-conflict abort gates as _for_bleed (pyproject.toml,
@@ -689,11 +690,10 @@ target_branches:
     base_branch: bleeding-edge
 
     tracked_branches:
-      # NOTE: both entries below are enabled: false — the branches do not exist yet
-      # (follow-up work, not yet authored). Tracked-branch entries pointing at
-      # non-existent refs cause daily "Branch does not exist" cron log spam (see
-      # documented incidents on _for_ci/* retirements above). Flip to enabled: true
-      # once the corresponding branch actually exists.
+      # NOTE: _for_accel/rust-accelerators is enabled and exists (created 2026-07-09);
+      # _for_accel/cython-framework is retired (compile-on-accelerated is in the gate script).
+      # Tracked-branch entries pointing at non-existent refs cause daily "Branch does not exist"
+      # cron log spam (see documented incidents on _for_ci/* retirements above).
 
       - name: _for_accel/rust-accelerators
         enabled: true   # Flipped 2026-07-09: branch created and pushed to origin, contains same content as former _for_bleed/rust-integration

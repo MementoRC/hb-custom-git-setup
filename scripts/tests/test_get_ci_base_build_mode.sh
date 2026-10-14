@@ -70,6 +70,6 @@ BRANCH_CONFIG="$TMPDIR_T/does-not-exist.yaml"
 check_fatal "nonexistent config is fatal" "FATAL: cannot read"
 
 BRANCH_CONFIG="$REAL_CONFIG"
-check_value "real config currently seed (update when flipped in Task 15)" seed
+check_value "real config is incremental" incremental
 
 [ "$fails" -eq 0 ]
