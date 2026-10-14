@@ -14,7 +14,7 @@ log_warning() { echo "$*"; }
 CI_BASE_SEED_TAG=ci-base-seed-test
 
 # shellcheck disable=SC1090
-source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^merge_development_incremental() {/,/^}/p" "$SCRIPT")
+source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^is_logical_conflict_path() {/,/^}/p;/^merge_development_incremental() {/,/^}/p" "$SCRIPT")
 
 for fn in ci_base_incremental_preconditions compute_for_ci_owned merge_development_incremental; do
     if ! declare -F "$fn" >/dev/null; then

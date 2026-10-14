@@ -15,7 +15,7 @@ CI_BASE_SEED_TAG=ci-base-seed-test
 DEVELOPMENT_BRANCH=development
 
 # shellcheck disable=SC1090
-source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^merge_development_incremental() {/,/^}/p;/^build_ci_base_incremental() {/,/^}/p;/^select_ci_base_builder() {/,/^}/p" "$SCRIPT")
+source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^is_logical_conflict_path() {/,/^}/p;/^merge_development_incremental() {/,/^}/p;/^build_ci_base_incremental() {/,/^}/p;/^select_ci_base_builder() {/,/^}/p" "$SCRIPT")
 
 for fn in ci_base_incremental_preconditions compute_for_ci_owned merge_development_incremental build_ci_base_incremental select_ci_base_builder; do
     if ! declare -F "$fn" >/dev/null; then

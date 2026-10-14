@@ -981,6 +981,15 @@ revert_retired_for_ci_merges() {
     return 0
 }
 
+# is_logical_conflict_path <path>: 0 if a merge conflict on <path> is a logical
+# conflict (abort, manual resolution), 1 otherwise.
+is_logical_conflict_path() {
+    case "$1" in
+        pyproject.toml|conftest.py|.github/*|test/conftest.py) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 ###############################################################################
 # merge_development_incremental   (mutating; operates on the checked-out HEAD)
 # Merges origin/${DEVELOPMENT_BRANCH:-development} into HEAD (ci-base, already
@@ -989,7 +998,7 @@ revert_retired_for_ci_merges() {
 # build_ci_base_from_seed). No-op (return 0) if development is already merged.
 # Conflict policy, every path checked BEFORE any is resolved:
 #   1. pyproject.toml|conftest.py|.github/*|test/conftest.py -> abort
-#      (case list duplicated from build_ci_base_from_seed, not shared)
+#      (is_logical_conflict_path, shared with build_ci_base_from_seed)
 #      .pre-commit-config.yaml -> ours
 #   2. path owned by a _for_ci/* merge (compute_for_ci_owned, pre-merge) -> abort
 #   3. anything else -> development's side (content/add-add: theirs; deleted by
@@ -1039,12 +1048,13 @@ merge_development_incremental() {
             case "$f" in
                 .pre-commit-config.yaml)
                     ours_paths+=("$f") ;;
-                pyproject.toml|conftest.py|.github/*|test/conftest.py)
-                    git merge --abort >/dev/null 2>&1
-                    git reset -q --hard "$start_sha"
-                    log_error "Incremental merge aborted: $f conflicts (rule: logical-conflict path list) — manual resolution needed"
-                    return 1 ;;
                 *)
+                    if is_logical_conflict_path "$f"; then
+                        git merge --abort >/dev/null 2>&1
+                        git reset -q --hard "$start_sha"
+                        log_error "Incremental merge aborted: $f conflicts (rule: logical-conflict path list) — manual resolution needed"
+                        return 1
+                    fi
                     if printf '%s\n' "$owned" | grep -Fxq -- "$f"; then
                         git merge --abort >/dev/null 2>&1
                         git reset -q --hard "$start_sha"
@@ -1153,9 +1163,12 @@ build_ci_base_from_seed() {
                     # development's legacy flake8/autopep8/eslint config — never a
                     # logical conflict worth aborting the rebuild over.
                     ours_conflicts+=("$file") ;;
-                pyproject.toml|conftest.py|.github/*|test/conftest.py)
-                    logical_conflicts+=("$file") ;;
-                *) format_only+=("$file") ;;
+                *)
+                    if is_logical_conflict_path "$file"; then
+                        logical_conflicts+=("$file")
+                    else
+                        format_only+=("$file")
+                    fi ;;
             esac
         done < <(git diff --name-only --diff-filter=U)
 
