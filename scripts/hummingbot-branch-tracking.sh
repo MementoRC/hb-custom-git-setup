@@ -658,7 +658,8 @@ PYEOF
     # Stage and commit if anything changed.
     git add -- "$@"
     if ! git diff --cached --quiet; then
-        git commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" >& /dev/null \
+        git commit --no-verify -m "chore(ci-base): py312 post-merge transform pass" \
+            -m "$(py312_tooling_trailer)" >& /dev/null \
             || { log_error "Failed to commit py312 transform changes"; return 1; }
         log_operation "Committed py312 post-merge transform changes"
     else
@@ -1255,6 +1256,28 @@ select_ci_base_builder() {
     fi
 }
 
+# Files the ci-base final format pass should touch. $1 = builder ("seed" or
+# "incremental"), $2 = pre-sync SHA. Seed prints "ALL" (whole tree);
+# incremental prints the .py files added/modified/renamed since $2 (may be empty).
+ci_base_format_targets() {
+    if [ "$1" != "incremental" ]; then
+        echo ALL
+        return 0
+    fi
+    git diff --name-only --diff-filter=AMR "$2" HEAD -- '*.py'
+}
+
+# Commit trailer recording the ruff that actually ran. $1 = resolved ruff command.
+ci_base_ruff_version_trailer() {
+    echo "Ruff-Version: $("$1" --version)"
+}
+
+# Commit trailer recording the custom_git_setup revision that produced the
+# py312 transform (repo root is the parent of this script's directory).
+py312_tooling_trailer() {
+    echo "Py312-Tooling: $(git -C "$SCRIPT_DIR/.." rev-parse --short HEAD 2>/dev/null || echo unknown)"
+}
+
 sync_base_branch() {
     local base_branch="$1"
 
@@ -1288,6 +1311,7 @@ sync_base_branch() {
     fi
 
     local pre_sync_sha
+    local ci_builder="seed"
 
     if [ "$REBUILD_MODE" = "true" ]; then
         # SEED-based rebuild: start from fixed anchor, merge development.
@@ -1297,6 +1321,7 @@ sync_base_branch() {
         local ci_build_mode
         ci_build_mode="$(get_ci_base_build_mode)" || return 1
         if [ "$(select_ci_base_builder "$ci_build_mode")" = "incremental" ]; then
+            ci_builder="incremental"
             build_ci_base_incremental || return 1
         else
             build_ci_base_from_seed "$base_branch" || return 1
@@ -1518,15 +1543,34 @@ PYEOF
         final_ruff_cmd="$REPO_PATH/.pixi/envs/default/bin/ruff"
     fi
     if [ -n "$final_ruff_cmd" ]; then
-        $final_ruff_cmd format hummingbot test controllers scripts >& /dev/null || true
-        $final_ruff_cmd check --select I --fix hummingbot test controllers scripts >& /dev/null || true
-        $final_ruff_cmd check --fix hummingbot test controllers scripts >& /dev/null || true
-        if ! git diff --quiet -- hummingbot test controllers scripts ':!sub-packages' 2>/dev/null; then
-            git add -- hummingbot test controllers scripts ':!sub-packages'
-            commit_if_changed "style: final ruff format + import sort after _for_ci merges (ci-base compliance)" --no-verify >& /dev/null
-            log_operation "Final ruff normalization after _for_ci merges"
+        # Seed mode: whole tree (unchanged). Incremental: only .py files changed
+        # since the pre-sync SHA, restricted to the same four roots.
+        local -a fmt_paths=(hummingbot test controllers scripts)
+        local fmt_scoped=false fmt_targets f
+        fmt_targets="$(ci_base_format_targets "$ci_builder" "$pre_sync_sha")"
+        if [ "$fmt_targets" != "ALL" ]; then
+            fmt_scoped=true
+            fmt_paths=()
+            while IFS= read -r f; do
+                case "$f" in
+                    hummingbot/*|test/*|controllers/*|scripts/*) fmt_paths+=("$f") ;;
+                esac
+            done <<< "$fmt_targets"
+        fi
+        if [ "$fmt_scoped" = "true" ] && [ ${#fmt_paths[@]} -eq 0 ]; then
+            log_operation "Final ruff normalization: no changed Python files (incremental) — skipping"
         else
-            log_operation "Final ruff normalization: no changes needed"
+            "$final_ruff_cmd" format "${fmt_paths[@]}" >& /dev/null || true
+            "$final_ruff_cmd" check --select I --fix "${fmt_paths[@]}" >& /dev/null || true
+            "$final_ruff_cmd" check --fix "${fmt_paths[@]}" >& /dev/null || true
+            if ! git diff --quiet -- "${fmt_paths[@]}" ':!sub-packages' 2>/dev/null; then
+                git add -- "${fmt_paths[@]}" ':!sub-packages'
+                commit_if_changed "style: final ruff format + import sort after _for_ci merges (ci-base compliance)" --no-verify \
+                    -m "$(ci_base_ruff_version_trailer "$final_ruff_cmd")" >& /dev/null
+                log_operation "Final ruff normalization after _for_ci merges"
+            else
+                log_operation "Final ruff normalization: no changes needed"
+            fi
         fi
     else
         log_warning "ruff not found — skipping final normalization"
