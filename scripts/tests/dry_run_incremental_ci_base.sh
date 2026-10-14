@@ -14,14 +14,15 @@
 # Override the config with BRANCH_CONFIG=<file>.
 #
 # Nothing real is mutated: all work happens in two throwaway DETACHED worktrees
-# under a mktemp dir (removed by an EXIT trap). A `git` shell function shadows
-# git for the sourced production functions: fetch is a no-op (the run uses
+# under a mktemp dir (removed by an EXIT trap). The shared harness (lib_dry_run.sh)
+# shadows git for the sourced production functions: fetch is a no-op (the run uses
 # origin/* as of the last fetch -- fetch first if you want fresh refs),
-# `checkout ci-base` is a no-op (the detached worktree stands in for it),
-# commits are never GPG-signed, and push/tag/branch/update-ref/symbolic-ref/
-# remote/worktree/config/stash/gc are refused. Commits and merges only move the
-# detached HEAD of the scratch worktrees. A before/after snapshot of every ref
-# and of the main checkout's HEAD is compared at the end.
+# `checkout ci-base` is a no-op and the literal ref `ci-base` resolves to the
+# worktree HEAD (the detached worktree stands in for it), commits are never
+# GPG-signed, and push/tag/branch/update-ref/symbolic-ref/remote/worktree/config/
+# stash/gc are refused. Commits and merges only move the detached HEAD of the
+# scratch worktrees. A before/after snapshot of every ref and of the main
+# checkout's HEAD is compared at the end.
 # Refuses to start while the pipeline flock (the one --rebuild and cron take) is
 # held, and holds it for the duration of the run.
 #
@@ -32,7 +33,8 @@
 #
 # Exit 0 only if logical_conflicts=0 AND classifier_resolutions=0.
 # Exit 1 if either is non-zero (offending paths printed).
-# Exit 2 if the dry run itself could not complete (setup/build/tooling error).
+# Exit 2 if the dry run itself could not complete (setup/build/tooling error,
+# or the harness caught merge_for_ci_branches falsely skipping a branch).
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hummingbot-branch-tracking.sh"
 SCRIPT_DIR="$(dirname "$SCRIPT")"
@@ -43,80 +45,20 @@ BRANCH_CONFIG="${BRANCH_CONFIG:-$CUSTOM_GIT_PATH/configs/branch-tracking.yaml}"
 DEVELOPMENT_BRANCH="${DEVELOPMENT_BRANCH:-development}"
 CI_BASE_SEED_TAG="${CI_BASE_SEED_TAG:-ci-base-seed-v5}"
 
-TMP=""
-REPO=""
-WT_CI=""
-WT_MOD=""
+# shellcheck source=lib_dry_run.sh
+source "$SCRIPT_DIR/tests/lib_dry_run.sh" || { echo "ERROR: cannot source lib_dry_run.sh" >&2; exit 2; }
+
+dry_run_init
+WT_CI="$TMP/dryrun-ci"
+WT_MOD="$TMP/dryrun-mod"
+DRY_RUN_WORKTREES+=("$WT_CI" "$WT_MOD")
 logical_count=0
 classifier_count=0
 logical_paths=()
 classifier_paths=()
 ci_tree="NONE"
 
-die() { echo "ERROR: $*" >&2; exit 2; }
-
-cleanup() {
-    local rc=$?
-    cd / || true
-    if [ -n "$TMP" ]; then
-        local w
-        for w in "$WT_CI" "$WT_MOD"; do
-            [ -n "$w" ] && command git -C "$REPO" worktree remove --force "$w" >/dev/null 2>&1
-        done
-        rm -rf "$TMP"
-    fi
-    exit "$rc"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# --- refuse to run alongside --rebuild / cron ---------------------------------
-command -v flock >/dev/null 2>&1 || die "flock not found: cannot verify that no --rebuild is running"
-command -v yq >/dev/null 2>&1 || die "yq not found: run via 'pixi run -e ci bash $0'"
-mkdir -p "$LOG_PATH" || die "cannot create $LOG_PATH"
-exec 9>"$LOG_PATH/.hb_pipeline.lock" || die "cannot open pipeline lock file"
-flock -n 9 || die "pipeline lock held ($LOG_PATH/.hb_pipeline.lock): a --rebuild or cron run is in progress; refusing to start"
-
-REPO="$(command git rev-parse --show-toplevel)" || die "not in a git repo"
-TMP="$(mktemp -d)" || die "mktemp failed"
-WT_CI="$TMP/dryrun-ci"
-WT_MOD="$TMP/dryrun-mod"
-export RUN_LOG_DIR="$TMP/logs"
-mkdir -p "$RUN_LOG_DIR"
-export REPO_PATH="$REPO"
-
-# --- logging (stand-ins for common.sh, which would repoint logs/runs/latest) ---
-log_operation() { echo "  | $1"; }
-log_warning() { echo "  | WARNING: $1"; }
-log_error() { echo "  | ERROR: $1"; }
-log_detail() { echo "  |     $1"; }
-log_step() { echo "  | -> $1"; }
-log_section() { echo "== $1"; }
-log_result() { if [ "$1" = true ]; then echo "  | OK: $2"; else echo "  | FAIL: $2"; fi; }
-indent_push() { :; }
-indent_pop() { :; }
-
 # --- load production functions by name (same approach as the sibling tests) ----
-# A bare `sed '/^fn() {/,/^}/p'` truncates functions that embed a heredoc with a
-# column-0 `}` (run_py312_transforms_for_changed does), so grow the range until
-# the text parses as a complete function.
-extract_fn() {
-    local file="$1" fn="$2" line buf=""
-    while IFS= read -r line; do
-        buf+="$line"$'\n'
-        if [ "$line" = "}" ] && bash -n <<<"$buf" 2>/dev/null; then
-            printf '%s' "$buf"
-            return 0
-        fi
-    done < <(sed -n "/^${fn}() {/,\$p" "$file")
-    return 1
-}
-load_fn() {
-    local src
-    src="$(extract_fn "$1" "$2")" || die "function $2 not found (or unparsable) in $1"
-    eval "$src"
-}
 for fn in branch_exists git_operation log_merge_failure; do
     load_fn "$COMMON" "$fn"
 done
@@ -137,65 +79,6 @@ done
 FAILED_MERGES=()
 ATTEMPTED_MERGES=0
 NOT_LANDED_BRANCHES=""
-
-# --- git isolation --------------------------------------------------------------
-export GIT_CONFIG_COUNT=7
-export GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
-export GIT_CONFIG_KEY_1=tag.gpgsign GIT_CONFIG_VALUE_1=false
-export GIT_CONFIG_KEY_2=core.hooksPath GIT_CONFIG_VALUE_2=/dev/null
-export GIT_CONFIG_KEY_3=merge.ours.driver GIT_CONFIG_VALUE_3=true
-export GIT_CONFIG_KEY_4=rerere.enabled GIT_CONFIG_VALUE_4=false
-export GIT_CONFIG_KEY_5=gc.auto GIT_CONFIG_VALUE_5=0
-export GIT_CONFIG_KEY_6=maintenance.auto GIT_CONFIG_VALUE_6=false
-export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-dry-run}" GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-dry-run@localhost}"
-export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-dry-run}" GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-dry-run@localhost}"
-export GIT_EDITOR=true GIT_MERGE_AUTOEDIT=no
-
-# Conflicted paths of failed `git merge` calls are appended here (set per stage).
-MERGE_CONFLICT_LOG=/dev/null
-
-git() {
-    case "${1:-}" in
-        fetch)
-            return 0 ;;
-        checkout)
-            [ "$#" -eq 2 ] && [ "$2" = "ci-base" ] && return 0
-            case "${2:-}" in
-                -b|-B) echo "dry-run: refusing 'git $*'" >&2; return 1 ;;
-            esac
-            command git "$@" ;;
-        push|tag|branch|update-ref|symbolic-ref|remote|worktree|config|stash|gc|prune|reflog)
-            echo "dry-run: refusing 'git $*'" >&2
-            return 1 ;;
-        commit)
-            local a args=()
-            for a in "$@"; do
-                case "$a" in
-                    -S|--gpg-sign|--gpg-sign=*) ;;
-                    *) args+=("$a") ;;
-                esac
-            done
-            command git "${args[@]}" ;;
-        merge)
-            local rc
-            command git "$@"
-            rc=$?
-            if [ "$rc" -ne 0 ]; then
-                command git diff --name-only --diff-filter=U >> "$MERGE_CONFLICT_LOG" 2>/dev/null
-            fi
-            return "$rc" ;;
-        *)
-            command git "$@" ;;
-    esac
-}
-
-snapshot() {
-    {
-        command git -C "$REPO" for-each-ref --format='%(refname) %(objectname)'
-        command git -C "$REPO" symbolic-ref -q HEAD
-        command git -C "$REPO" rev-parse HEAD
-    } 2>/dev/null | sha256sum | cut -d' ' -f1
-}
 
 report_and_exit() {
     local stage="$1" p

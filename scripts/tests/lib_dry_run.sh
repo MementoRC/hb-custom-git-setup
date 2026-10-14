@@ -53,7 +53,10 @@ dry_run_init() {
 }
 
 # --- logging (stand-ins for common.sh, which would repoint logs/runs/latest) ---
-log_operation() { echo "  | $1"; }
+log_operation() {
+    echo "  | $1"
+    guard_already_in_ci_base "$1"
+}
 log_warning() { echo "  | WARNING: $1"; }
 log_error() { echo "  | ERROR: $1"; }
 log_detail() { echo "  |     $1"; }
@@ -100,11 +103,58 @@ export GIT_EDITOR=true GIT_MERGE_AUTOEDIT=no
 # Conflicted paths of failed `git merge` calls are appended here (set per stage).
 MERGE_CONFLICT_LOG=/dev/null
 
+# The detached worktree stands in for the ci-base branch, so inside the sandbox the
+# literal ref `ci-base` must mean HEAD, not the REAL local ci-base branch (which
+# holds everything and made merge_for_ci_branches' `merge-base --is-ancestor
+# <ref> ci-base` skip every branch, BT.sh:2687). Rewrites bare `ci-base`,
+# `refs/heads/ci-base` and `ci-base<suffix>` / `<prefix>..ci-base` forms
+# (^ ~ : @ .. ...) to HEAD; `origin/ci-base` is left untouched. Stops at `--`.
+_ci_base_to_head() {
+    local a
+    while [ "$#" -gt 0 ]; do
+        a="$1"
+        shift
+        case "$a" in
+            --) REWRITTEN_ARGS+=("--" "$@"); return 0 ;;
+            ci-base|refs/heads/ci-base) a="HEAD" ;;
+            ci-base^*|ci-base~*|ci-base:*|ci-base@*|ci-base..*) a="HEAD${a#ci-base}" ;;
+            refs/heads/ci-base^*|refs/heads/ci-base~*|refs/heads/ci-base:*|refs/heads/ci-base@*|refs/heads/ci-base..*)
+                a="HEAD${a#refs/heads/ci-base}" ;;
+            *..ci-base) a="${a%ci-base}HEAD" ;;
+            *..refs/heads/ci-base) a="${a%refs/heads/ci-base}HEAD" ;;
+        esac
+        REWRITTEN_ARGS+=("$a")
+    done
+}
+
+# Independent check of merge_for_ci_branches' "<branch> already in ci-base --
+# skipping" claim against the worktree HEAD. A false claim means the harness is
+# lying about the build (exit 2), never a drift/conflict verdict.
+guard_already_in_ci_base() {
+    case "$1" in
+        *" already in ci-base — skipping") ;;
+        *) return 0 ;;
+    esac
+    local branch="${1%% already in ci-base*}" location tip
+    location="$(branch_exists "$branch")"
+    case "$location" in
+        remote) tip="origin/$branch" ;;
+        *) tip="$branch" ;;
+    esac
+    command git merge-base --is-ancestor "$tip" HEAD 2>/dev/null \
+        || die "harness defect: '$branch' reported as already in ci-base but $tip is NOT an ancestor of the worktree HEAD"
+}
+
 # Shadows git for the sourced production functions: fetch is a no-op,
 # `checkout ci-base` is a no-op (the detached worktree stands in for it), commits
-# are never GPG-signed, ref-writing subcommands are refused.
+# are never GPG-signed, ref-writing subcommands are refused, and the literal ref
+# `ci-base` in read commands resolves to HEAD (see _ci_base_to_head).
 git() {
     case "${1:-}" in
+        merge-base|rev-parse|diff|log|show|rev-list|merge-tree|ls-tree|cat-file|name-rev|describe|diff-tree|cherry|range-diff)
+            local REWRITTEN_ARGS=()
+            _ci_base_to_head "$@"
+            command git "${REWRITTEN_ARGS[@]}" ;;
         fetch)
             return 0 ;;
         checkout)
