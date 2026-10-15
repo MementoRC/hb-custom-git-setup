@@ -28,7 +28,7 @@ trap cleanup EXIT
 
 log_detail() { :; }
 for fn in ci_base_generated_path read_modular_owned_paths modular_owns_path \
-          conflict_is_format_only conflict_gitignore_pattern_subset \
+          conflict_is_format_only py_pair_format_equivalent conflict_gitignore_pattern_subset \
           conflict_side_is_subset conflict_ci_base_is_subset conflict_modular_is_subset \
           conflict_regions_variant conflict_regions_style_only; do
     # shellcheck disable=SC1090

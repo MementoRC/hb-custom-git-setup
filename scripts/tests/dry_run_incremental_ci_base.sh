@@ -70,7 +70,7 @@ for fn in is_logical_conflict_path merge_development_incremental build_ci_base_i
           commit_if_changed run_py312_transforms_for_changed py312_tooling_trailer \
           ci_base_format_targets ci_base_ruff_version_trailer pin_aiomqtt_transport \
           ci_base_generated_path read_modular_owned_paths modular_owns_path \
-          conflict_is_format_only conflict_gitignore_pattern_subset conflict_side_is_subset \
+          conflict_is_format_only py_pair_format_equivalent conflict_gitignore_pattern_subset conflict_side_is_subset \
           conflict_ci_base_is_subset conflict_modular_is_subset \
           conflict_regions_variant conflict_regions_style_only; do
     load_fn "$SCRIPT" "$fn"

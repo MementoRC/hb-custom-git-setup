@@ -20,7 +20,7 @@ if ! command -v ruff >/dev/null 2>&1; then
     echo "FAIL: ruff not on PATH (run via pixi run -e ci, see header)"; exit 1
 fi
 
-for fn in conflict_is_format_only conflict_regions_variant \
+for fn in conflict_is_format_only py_pair_format_equivalent conflict_regions_variant \
           conflict_regions_style_only resolve_conflict_regions_theirs; do
     # shellcheck disable=SC1090
     source <(sed -n "/^${fn}() {/,/^}/p" "$SCRIPT")

@@ -1622,12 +1622,33 @@ PYEOF
 # @ExecutorFactory.register decorators in rebuild 20260823_160402.
 conflict_is_format_only() {
     local file="$1"
-    local ruff_cmd ours theirs rc=1
+    local ours theirs rc=1
 
     case "$file" in
         *.py) ;;
         *) return 1 ;;
     esac
+
+    ours=$(mktemp --suffix=.py) || return 1
+    theirs=$(mktemp --suffix=.py) || { rm -f "$ours"; return 1; }
+
+    if git show ":2:$file" > "$ours" 2>/dev/null &&
+       git show ":3:$file" > "$theirs" 2>/dev/null &&
+       py_pair_format_equivalent "$ours" "$theirs"; then
+        rc=0
+    fi
+
+    rm -f "$ours" "$theirs"
+    return $rc
+}
+
+# py_pair_format_equivalent <fileA> <fileB>
+# The shared normalize-and-compare used by conflict_is_format_only and
+# resync_modular_format_residue. Normalizes BOTH files IN PLACE (callers pass
+# temp copies) and returns 0 only when they are then byte-identical. rc 1 when
+# they differ or when no formatter is available.
+py_pair_format_equivalent() {
+    local ours="$1" theirs="$2" ruff_cmd
 
     if command -v ruff >/dev/null 2>&1; then
         ruff_cmd="ruff"
@@ -1637,27 +1658,62 @@ conflict_is_format_only() {
         return 1
     fi
 
-    ours=$(mktemp --suffix=.py) || return 1
-    theirs=$(mktemp --suffix=.py) || { rm -f "$ours"; return 1; }
+    # Typing-style modernization (Optional[X] -> X | None, List -> list) is
+    # semantics-preserving on py312. ci-base gets it from the py312 transform
+    # pass while modular branches don't, so without this a pure typing-style
+    # difference looks like a logical conflict. F401 drops the now-unused
+    # typing imports. Only these normalized comparison copies are touched,
+    # never the committed result. Failures are ignored, like the format below.
+    { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$ours" >/dev/null 2>&1 || true; } &&
+    { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$theirs" >/dev/null 2>&1 || true; } &&
+    $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
+    $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1 &&
+    cmp -s "$ours" "$theirs"
+}
 
-    if git show ":2:$file" > "$ours" 2>/dev/null &&
-       git show ":3:$file" > "$theirs" 2>/dev/null &&
-       # Typing-style modernization (Optional[X] -> X | None, List -> list) is
-       # semantics-preserving on py312. ci-base gets it from the py312 transform
-       # pass while modular branches don't, so without this a pure typing-style
-       # difference looks like a logical conflict. F401 drops the now-unused
-       # typing imports. Only these normalized comparison copies are touched,
-       # never the committed result. Failures are ignored, like the format below.
-       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$ours" >/dev/null 2>&1 || true; } &&
-       { $ruff_cmd check --select I,UP006,UP007,UP035,UP045,F401 --fix-only --unsafe-fixes --quiet --no-cache --target-version py312 "$theirs" >/dev/null 2>&1 || true; } &&
-       $ruff_cmd format --quiet "$ours" >/dev/null 2>&1 &&
-       $ruff_cmd format --quiet "$theirs" >/dev/null 2>&1 &&
-       cmp -s "$ours" "$theirs"; then
-        rc=0
+# resync_modular_format_residue
+# modular syncs by merging origin/ci-base and is never reset, so it keeps old
+# seed-epoch format commits that are not ancestors of the current ci-base. The
+# leftover blank-line-only differences make later ci-base merges conflict. For
+# every .py/.pyi path present on both sides whose blobs are format-equivalent
+# (py_pair_format_equivalent, the same normalization as conflict_is_format_only)
+# and which modular does not own, take ci-base's blob and commit once. Semantic
+# differences, non-Python files and modular-owned paths are never touched.
+# The count is informational (format-residue-resynced=N), NOT a classifier
+# resolution. Must run with HEAD on modular. Always returns 0 (best effort).
+resync_modular_format_residue() {
+    local base_ref="${1:-origin/ci-base}"
+    local out="${RUN_LOG_DIR:-/dev/null}/modular_classifier_counts.txt"
+    local path a b count=0 resynced=()
+
+    a=$(mktemp --suffix=.py) || return 0
+    b=$(mktemp --suffix=.py) || { rm -f "$a"; return 0; }
+
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        modular_owns_path "$path" && continue
+        git cat-file -e "$base_ref:$path" 2>/dev/null || continue
+        git cat-file -e "HEAD:$path" 2>/dev/null || continue
+        git show "HEAD:$path" > "$a" 2>/dev/null || continue
+        git show "$base_ref:$path" > "$b" 2>/dev/null || continue
+        py_pair_format_equivalent "$a" "$b" || continue
+        resynced+=("$path")
+    done < <(git diff --name-only --diff-filter=M "$base_ref" HEAD -- '*.py' '*.pyi')
+    rm -f "$a" "$b"
+
+    for path in "${resynced[@]}"; do
+        git checkout "$base_ref" -- "$path" >/dev/null 2>&1 && count=$((count + 1))
+    done
+
+    if [ "$count" -gt 0 ]; then
+        commit_if_changed "sync(modular): resync $count format-only residue files to ci-base" --no-verify >/dev/null 2>&1 || {
+            log_error "Failed to commit modular format-residue resync"
+            return 0
+        }
     fi
-
-    rm -f "$ours" "$theirs"
-    return $rc
+    log_operation "Resynced $count format-only residue files on modular to $base_ref"
+    printf 'format-residue-resynced=%d\n' "$count" >> "$out"
+    return 0
 }
 
 ###############################################################################
@@ -2052,6 +2108,7 @@ sync_modular_branch() {
                    -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
                 log_operation "Merged $base_branch into $modular_branch"
                 record_modular_classifier_counts
+                resync_modular_format_residue "$base_branch"
             else
                 # Classify conflicts: logical → abort, format-only → auto-resolve
                 # (keep ci-base), ci-base-subset → auto-resolve (keep modular).
@@ -2144,6 +2201,7 @@ sync_modular_branch() {
                 MODULAR_CLASSIFIER_COUNTS["style-only-region"]=$style_region_count
                 MODULAR_CLASSIFIER_COUNTS["generated-file"]=$generated_count
                 record_modular_classifier_counts
+                resync_modular_format_residue "$base_branch"
             fi
         fi
     else
