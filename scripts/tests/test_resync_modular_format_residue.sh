@@ -18,7 +18,8 @@ log_error() { echo "log_error: $*" >&2; }
 # Stub: only paths under owned/ are modular-owned.
 modular_owns_path() { case "$1" in owned/*) return 0 ;; esac; return 1; }
 
-for fn in commit_if_changed py_pair_format_equivalent resync_modular_format_residue; do
+for fn in commit_if_changed py_pair_format_equivalent py_pair_semantically_equal \
+          resync_modular_format_residue; do
     # shellcheck disable=SC1090
     source <(sed -n "/^${fn}() {/,/^}/p" "$SCRIPT")
     if ! declare -F "$fn" >/dev/null; then
@@ -37,6 +38,10 @@ SPACED=$'def f():\n\n    return 1\n'
 TIGHT=$'def f():\n    return 1\n'
 SEMANTIC_A=$'def f():\n    return 1\n'
 SEMANTIC_B=$'def f():\n    return 2\n'
+COMMENT_A=$'def f():\n    # old note\n    return 1\n'
+COMMENT_B=$'def f():\n    # new note\n    return 1\n'
+STRING_A=$'def f():\n    return """a\n\nb"""\n'
+STRING_B=$'def f():\n    return """a\nb"""\n'
 
 # new_repo: ci-base has the "base side" content, modular (checked out) has the
 # "modular side" content. Sets RUN_LOG_DIR and cd's into the repo.
@@ -59,6 +64,8 @@ new_repo() {
     printf '%s' "$SEMANTIC_A" > sem.py
     printf 'k: 1\n\n' > cfg.yaml
     printf '%s' "$SPACED" > ok.py
+    printf '%s' "$COMMENT_A" > cm.py
+    printf '%s' "$STRING_A" > st.py
     git add -A
     git commit -q --no-verify -m "ci-base"
     git checkout -q -b modular
@@ -73,6 +80,8 @@ printf '%s' "$TIGHT" > a.py
 printf '%s' "$TIGHT" > owned/o.py
 printf '%s' "$SEMANTIC_B" > sem.py
 printf 'k: 1\n' > cfg.yaml
+printf '%s' "$COMMENT_B" > cm.py
+printf '%s' "$STRING_B" > st.py
 git commit -qam "modular drift" --no-verify
 before="$(modular_commits)"
 resync_modular_format_residue ci-base
@@ -86,6 +95,16 @@ if [ "$(cat sem.py)" = "$(printf '%s' "$SEMANTIC_B")" ]; then
     pass "(b) semantically different file left alone"
 else
     fail "(b) sem.py was overwritten"
+fi
+if [ "$(cat cm.py)" = "$(printf '%s' "$COMMENT_B")" ]; then
+    pass "(g) comment-text-only difference left alone"
+else
+    fail "(g) cm.py was overwritten"
+fi
+if [ "$(cat st.py)" = "$(printf '%s' "$STRING_B")" ]; then
+    pass "(h) blank-line change inside triple-quoted string left alone"
+else
+    fail "(h) st.py was overwritten"
 fi
 if [ "$(cat owned/o.py)" = "$(printf '%s' "$TIGHT")" ]; then
     pass "(c) modular-owned file left alone"

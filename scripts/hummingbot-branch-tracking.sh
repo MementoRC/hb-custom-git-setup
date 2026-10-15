@@ -1671,6 +1671,41 @@ py_pair_format_equivalent() {
     cmp -s "$ours" "$theirs"
 }
 
+# py_pair_semantically_equal <fileA> <fileB>
+# Fallback for resync_modular_format_residue ONLY (never used by the conflict
+# classifiers). ruff format preserves blank lines at the start of a block, so a
+# blank-line-after-def difference survives py_pair_format_equivalent. rc 0 only
+# when both files parse, their ASTs are identical (docstrings and string
+# literals included, so blank-line changes inside strings differ) and their
+# ordered COMMENT tokens are identical. Any parse/tokenize error is rc 1.
+py_pair_semantically_equal() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -I - "$1" "$2" <<'PYEOF'
+import ast
+import io
+import sys
+import tokenize
+
+
+def signature(path):
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    tree = ast.dump(ast.parse(src), include_attributes=False)
+    comments = [
+        t.string
+        for t in tokenize.generate_tokens(io.StringIO(src).readline)
+        if t.type == tokenize.COMMENT
+    ]
+    return tree, comments
+
+
+try:
+    sys.exit(0 if signature(sys.argv[1]) == signature(sys.argv[2]) else 1)
+except (SyntaxError, ValueError, OSError, tokenize.TokenError):
+    sys.exit(1)
+PYEOF
+}
+
 # resync_modular_format_residue
 # modular syncs by merging origin/ci-base and is never reset, so it keeps old
 # seed-epoch format commits that are not ancestors of the current ci-base. The
@@ -1696,7 +1731,14 @@ resync_modular_format_residue() {
         git cat-file -e "HEAD:$path" 2>/dev/null || continue
         git show "HEAD:$path" > "$a" 2>/dev/null || continue
         git show "$base_ref:$path" > "$b" 2>/dev/null || continue
-        py_pair_format_equivalent "$a" "$b" || continue
+        # ruff keeps block-leading blank lines, so blank-line-after-def residue
+        # is NOT format-equivalent. Fall back to AST + comment equality. The
+        # first call normalizes a/b in place, so re-extract the pristine blobs.
+        if ! py_pair_format_equivalent "$a" "$b"; then
+            git show "HEAD:$path" > "$a" 2>/dev/null || continue
+            git show "$base_ref:$path" > "$b" 2>/dev/null || continue
+            py_pair_semantically_equal "$a" "$b" || continue
+        fi
         resynced+=("$path")
     done < <(git diff --name-only --diff-filter=M "$base_ref" HEAD -- '*.py' '*.pyi')
     rm -f "$a" "$b"
