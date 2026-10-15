@@ -145,6 +145,16 @@ else
     fail "(e2) zero count line missing"
 fi
 
+# (i) structural: sync_modular_branch calls the resync exactly once, after the
+# up-to-date/merge if-else (so the "already up to date" path reaches it).
+sync_body="$(sed -n '/^sync_modular_branch() {/,/^}/p' "$SCRIPT")"
+if [ "$(printf '%s\n' "$sync_body" | grep -c '^ *resync_modular_format_residue ')" -eq 1 ] &&
+   printf '%s\n' "$sync_body" | grep -B2 '^ *resync_modular_format_residue ' | grep -q '^        # Format residue'; then
+    pass "(i) up-to-date path reaches the single resync call"
+else
+    fail "(i) resync call missing or not on the shared path in sync_modular_branch"
+fi
+
 if [ "$fails" -eq 0 ]; then
     echo "ALL PASS"
     exit 0

@@ -2150,7 +2150,6 @@ sync_modular_branch() {
                    -m "sync(modular): merge $base_branch into $modular_branch" >& /dev/null; then
                 log_operation "Merged $base_branch into $modular_branch"
                 record_modular_classifier_counts
-                resync_modular_format_residue "$base_branch"
             else
                 # Classify conflicts: logical → abort, format-only → auto-resolve
                 # (keep ci-base), ci-base-subset → auto-resolve (keep modular).
@@ -2243,9 +2242,11 @@ sync_modular_branch() {
                 MODULAR_CLASSIFIER_COUNTS["style-only-region"]=$style_region_count
                 MODULAR_CLASSIFIER_COUNTS["generated-file"]=$generated_count
                 record_modular_classifier_counts
-                resync_modular_format_residue "$base_branch"
             fi
         fi
+        # Format residue is independent of whether a merge happened, so resync
+        # on every path (up-to-date, clean merge, auto-resolved conflicts).
+        resync_modular_format_residue "$base_branch"
     else
         # First run: create modular from base_branch tip (prefer local, fallback to remote)
         local base_tip
