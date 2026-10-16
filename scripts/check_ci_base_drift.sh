@@ -47,7 +47,7 @@ dry_run_init
 WT_SEED="$TMP/drift-seed"
 DRY_RUN_WORKTREES+=("$WT_SEED")
 
-for fn in branch_exists git_operation log_merge_failure; do
+for fn in branch_exists git_lock_retry git_operation log_merge_failure; do
     load_fn "$COMMON" "$fn"
 done
 for fn in is_logical_conflict_path build_ci_base_from_seed get_enabled_for_ci_branches \

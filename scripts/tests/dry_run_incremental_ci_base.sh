@@ -59,7 +59,7 @@ classifier_paths=()
 ci_tree="NONE"
 
 # --- load production functions by name (same approach as the sibling tests) ----
-for fn in branch_exists git_operation log_merge_failure; do
+for fn in branch_exists git_lock_retry git_operation log_merge_failure; do
     load_fn "$COMMON" "$fn"
 done
 for fn in is_logical_conflict_path merge_development_incremental build_ci_base_incremental \

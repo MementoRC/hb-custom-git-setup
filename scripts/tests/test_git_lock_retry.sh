@@ -83,4 +83,33 @@ else
     fail "(c) rc=$rc sleeps=$(wc -l < "$SLEEP_LOG")"
 fi
 
+# (d) regression: git_operation/branch_exists keep status and stdout intact
+log_error() { :; }
+log_detail() { :; }
+# shellcheck disable=SC1090
+source <(sed -n "/^git_operation() {/,/^}/p;/^branch_exists() {/,/^}/p" "$COMMON")
+reset_logs
+git checkout -q other
+exp_sha="$(git rev-parse --verify other)"
+got_sha="$(git_operation rev-parse --verify other)"
+if [ "$got_sha" = "$exp_sha" ] && git_operation rev-parse --verify other >/dev/null 2>&1 \
+    && ! git_operation rev-parse --verify no-such-branch >/dev/null 2>&1 \
+    && [ "$(branch_exists other)" = "local" ] && [ "$(branch_exists no-such-branch)" = "none" ]; then
+    pass "(d) git_operation/branch_exists: status and stdout intact"
+else
+    fail "(d) got_sha=$got_sha exp=$exp_sha exists=$(branch_exists other)"
+fi
+
+# (e) call-site shapes used in branch-tracking: captured output and status
+out="$(git_lock_retry git checkout other 2>&1)"; rc=$?
+[ $rc -eq 0 ] && pass "(e1) captured checkout status 0" || fail "(e1) rc=$rc"
+out="$(git_lock_retry git checkout no-such-branch 2>&1)"; rc=$?
+if [ $rc -ne 0 ] && [[ "$out" == *"no-such-branch"* ]]; then
+    pass "(e2) captured checkout failure keeps status and message"
+else
+    fail "(e2) rc=$rc out=$out"
+fi
+git_lock_retry git checkout other > "$TMPDIR_T/co.log" 2>&1; rc=$?
+[ $rc -eq 0 ] && pass "(e3) redirect-to-file form status 0" || fail "(e3) rc=$rc"
+
 [ "$fails" -eq 0 ]
