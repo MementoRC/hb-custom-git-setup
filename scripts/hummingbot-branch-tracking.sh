@@ -1303,7 +1303,7 @@ sync_base_branch() {
     log_section "Syncing $base_branch with $DEVELOPMENT_BRANCH"
 
     local checkout_output
-    checkout_output=$(git checkout "$base_branch" 2>&1)
+    checkout_output=$(git_lock_retry git checkout "$base_branch" 2>&1)
     local checkout_status=$?
     if [ $checkout_status -ne 0 ]; then
         log_error "Failed to checkout $base_branch (exit $checkout_status)"
@@ -2467,7 +2467,7 @@ merge_for_modular_branches() {
             ref="origin/$branch"
         fi
 
-        git checkout "$modular_branch" >& /dev/null || { log_error "Checkout $modular_branch failed"; return 1; }
+        git_lock_retry git checkout "$modular_branch" >& /dev/null || { log_error "Checkout $modular_branch failed"; return 1; }
 
         if git merge-base --is-ancestor "$ref" "$modular_branch" 2>/dev/null; then
             log_operation "$branch already in $modular_branch — skipping"
@@ -2794,7 +2794,7 @@ merge_for_ci_branches() {
             ref="origin/$branch"
         fi
 
-        git checkout "$base_branch" > /tmp/hb_checkout_err.log 2>&1 || { log_error "Checkout $base_branch failed: $(head -c 400 /tmp/hb_checkout_err.log | tr '\n' ' ')"; return 1; }
+        git_lock_retry git checkout "$base_branch" > /tmp/hb_checkout_err.log 2>&1 || { log_error "Checkout $base_branch failed: $(head -c 400 /tmp/hb_checkout_err.log | tr '\n' ' ')"; return 1; }
 
         if git merge-base --is-ancestor "$ref" "$base_branch" 2>/dev/null; then
             log_operation "$branch already in $base_branch — skipping"
@@ -2802,7 +2802,7 @@ merge_for_ci_branches() {
         fi
 
         local merge_log; merge_log="$(mktemp)"
-        if git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" > "$merge_log" 2>&1; then
+        if git_lock_retry git merge --no-ff "$ref" -m "Auto-merge $branch into $base_branch" > "$merge_log" 2>&1; then
             rm -f "$merge_log"
             log_result true "$branch merged cleanly"
         else

@@ -341,6 +341,28 @@ git_quiet() {
     echo "$output" | grep -Ev "^(Already on |Switched to |Your branch is )"
 }
 
+# Run a command (normally git ...), retrying with 1/2/4/8s backoff (5 attempts)
+# when stderr shows a transient git lock collision. Never deletes lock files.
+# stdout passes through; stderr is replayed to stderr after the final attempt.
+git_lock_retry() {
+    local attempt=1 max_attempts=5 delay=1 rc errf
+    errf="$(mktemp)"
+    while :; do
+        "$@" 2>"$errf"
+        rc=$?
+        if [ $rc -eq 0 ] || [ $attempt -ge $max_attempts ] \
+            || ! grep -Eq "index\.lock': File exists|could not lock config file|Unable to create .*\.lock" "$errf"; then
+            cat "$errf" >&2
+            rm -f "$errf"
+            return $rc
+        fi
+        log_operation "Git lock contention on '${*:1:3}' (attempt $attempt/$max_attempts failed); retrying in ${delay}s" >&2
+        sleep "$delay"
+        delay=$((delay * 2))
+        attempt=$((attempt + 1))
+    done
+}
+
 git_operation() {
     local operation="$1"
     shift
@@ -351,7 +373,7 @@ git_operation() {
         log_detail "Executing: git $operation $*"
     fi
 
-    output=$(git $operation "$@" 2>&1)
+    output=$(git_lock_retry git $operation "$@" 2>&1)
     local status=$?
 
     if [ $status -ne 0 ]; then
