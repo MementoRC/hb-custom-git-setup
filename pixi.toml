@@ -1,0 +1,20 @@
+[workspace]
+name = "custom-git-setup"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tasks.rebuild]
+cmd = "bash scripts/pixi-launch.sh rebuild"
+description = "Run hummingbot-branch-tracking.sh --rebuild in the hummingbot repo (log: /tmp/rebuild.log)"
+
+[tasks.drift-check]
+cmd = "bash scripts/pixi-launch.sh drift-check"
+description = "git fetch origin, then run check_ci_base_drift.sh in the hummingbot ci env"
+
+[tasks.bt-test]
+cmd = "bash scripts/pixi-launch.sh bt-test"
+description = "Run scripts/tests/<name>.sh in the hummingbot ci env (pass <name> as the argument)"
+
+[tasks.dry-run]
+cmd = "bash scripts/pixi-launch.sh dry-run"
+description = "Run scripts/tests/dry_run_incremental_ci_base.sh in the hummingbot ci env"
