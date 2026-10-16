@@ -1710,7 +1710,8 @@ PYEOF
 # modular syncs by merging origin/ci-base and is never reset, so it keeps old
 # seed-epoch format commits that are not ancestors of the current ci-base. The
 # leftover blank-line-only differences make later ci-base merges conflict. For
-# every .py/.pyi path present on both sides whose blobs are format-equivalent
+# hummingbot/**/*.py and test/**/*.py path (ci-base's ruff scope; nothing else)
+# present on both sides whose blobs are format-equivalent
 # (py_pair_format_equivalent, the same normalization as conflict_is_format_only)
 # and which modular does not own, take ci-base's blob and commit once. Semantic
 # differences, non-Python files and modular-owned paths are never touched.
@@ -1719,13 +1720,22 @@ PYEOF
 resync_modular_format_residue() {
     local base_ref="${1:-origin/ci-base}"
     local out="${RUN_LOG_DIR:-/dev/null}/modular_classifier_counts.txt"
-    local path a b count=0 resynced=()
+    local path a b count=0 skipped=0 resynced=()
 
     a=$(mktemp --suffix=.py) || return 0
     b=$(mktemp --suffix=.py) || { rm -f "$a"; return 0; }
 
     while IFS= read -r path; do
         [ -n "$path" ] || continue
+        # Scope = ci-base pyproject [tool.ruff] include ("hummingbot/**/*.py",
+        # "test/**/*.py"). Modular widens ruff to *.pyi, controllers, scripts
+        # and bin, so ci-base never formats/isort-sorts those; resyncing them
+        # to ci-base's versions reintroduces I001. In a bash case pattern '*'
+        # crosses '/', so these match at any depth.
+        case "$path" in
+            hummingbot/*.py | test/*.py) ;;
+            *) skipped=$((skipped + 1)); continue ;;
+        esac
         modular_owns_path "$path" && continue
         git cat-file -e "$base_ref:$path" 2>/dev/null || continue
         git cat-file -e "HEAD:$path" 2>/dev/null || continue
@@ -1742,6 +1752,7 @@ resync_modular_format_residue() {
         resynced+=("$path")
     done < <(git diff --name-only --diff-filter=M "$base_ref" HEAD -- '*.py' '*.pyi')
     rm -f "$a" "$b"
+    log_operation "Format-residue resync skipped $skipped out-of-scope paths (not formatted by $base_ref ruff config)"
 
     for path in "${resynced[@]}"; do
         git checkout "$base_ref" -- "$path" >/dev/null 2>&1 && count=$((count + 1))

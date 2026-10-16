@@ -16,7 +16,7 @@ fi
 log_operation() { :; }
 log_error() { echo "log_error: $*" >&2; }
 # Stub: only paths under owned/ are modular-owned.
-modular_owns_path() { case "$1" in owned/*) return 0 ;; esac; return 1; }
+modular_owns_path() { case "$1" in hummingbot/owned/*) return 0 ;; esac; return 1; }
 
 for fn in commit_if_changed py_pair_format_equivalent py_pair_semantically_equal \
           resync_modular_format_residue; do
@@ -42,6 +42,8 @@ COMMENT_A=$'def f():\n    # old note\n    return 1\n'
 COMMENT_B=$'def f():\n    # new note\n    return 1\n'
 STRING_A=$'def f():\n    return """a\n\nb"""\n'
 STRING_B=$'def f():\n    return """a\nb"""\n'
+IMP_A=$'import sys\nimport os\n'
+IMP_B=$'import os\nimport sys\n'
 
 # new_repo: ci-base has the "base side" content, modular (checked out) has the
 # "modular side" content. Sets RUN_LOG_DIR and cd's into the repo.
@@ -52,20 +54,22 @@ new_repo() {
     RUN_LOG_DIR="$root/runlog"
     mkdir -p "$RUN_LOG_DIR"
     root="$root/repo"
-    mkdir -p "$root/owned"
+    mkdir -p "$root/hummingbot/owned" "$root/controllers"
     cd "$root" || exit 1
     git init -q -b ci-base .
     git config user.name Test
     git config user.email test@example.invalid
     git config commit.gpgsign false
     git config core.hooksPath "$TMPDIR_T/nohooks"
-    printf '%s' "$SPACED" > a.py
-    printf '%s' "$SPACED" > owned/o.py
-    printf '%s' "$SEMANTIC_A" > sem.py
+    printf '%s' "$SPACED" > hummingbot/a.py
+    printf '%s' "$SPACED" > hummingbot/owned/o.py
+    printf '%s' "$SEMANTIC_A" > hummingbot/sem.py
     printf 'k: 1\n\n' > cfg.yaml
-    printf '%s' "$SPACED" > ok.py
-    printf '%s' "$COMMENT_A" > cm.py
-    printf '%s' "$STRING_A" > st.py
+    printf '%s' "$SPACED" > hummingbot/ok.py
+    printf '%s' "$COMMENT_A" > hummingbot/cm.py
+    printf '%s' "$STRING_A" > hummingbot/st.py
+    printf '%s' "$IMP_A" > controllers/x.py
+    printf '%s' "$IMP_A" > hummingbot/foo.pyi
     git add -A
     git commit -q --no-verify -m "ci-base"
     git checkout -q -b modular
@@ -76,37 +80,45 @@ modular_commits() { git rev-list --count ci-base..HEAD; }
 # (a) whitespace-only residue is resynced; (b) semantic diff left alone;
 # (c) owned left alone; (d) yaml left alone; (f) count line written.
 new_repo
-printf '%s' "$TIGHT" > a.py
-printf '%s' "$TIGHT" > owned/o.py
-printf '%s' "$SEMANTIC_B" > sem.py
+printf '%s' "$TIGHT" > hummingbot/a.py
+printf '%s' "$TIGHT" > hummingbot/owned/o.py
+printf '%s' "$SEMANTIC_B" > hummingbot/sem.py
 printf 'k: 1\n' > cfg.yaml
-printf '%s' "$COMMENT_B" > cm.py
-printf '%s' "$STRING_B" > st.py
+printf '%s' "$COMMENT_B" > hummingbot/cm.py
+printf '%s' "$STRING_B" > hummingbot/st.py
+printf '%s' "$IMP_B" > controllers/x.py
+printf '%s' "$IMP_B" > hummingbot/foo.pyi
 git commit -qam "modular drift" --no-verify
 before="$(modular_commits)"
 resync_modular_format_residue ci-base
 
-if [ "$(cat a.py)" = "$(printf '%s' "$SPACED")" ] && [ "$(git status --porcelain | wc -l)" -eq 0 ]; then
+if [ "$(cat controllers/x.py)" = "$(printf '%s' "$IMP_B")" ] &&
+   [ "$(cat hummingbot/foo.pyi)" = "$(printf '%s' "$IMP_B")" ]; then
+    pass "(j) controllers/ and .pyi import-order differences left alone"
+else
+    fail "(j) out-of-scope file was overwritten"
+fi
+if [ "$(cat hummingbot/a.py)" = "$(printf '%s' "$SPACED")" ] && [ "$(git status --porcelain | wc -l)" -eq 0 ]; then
     pass "(a) whitespace-only residue file resynced to ci-base"
 else
     fail "(a) a.py not resynced"
 fi
-if [ "$(cat sem.py)" = "$(printf '%s' "$SEMANTIC_B")" ]; then
+if [ "$(cat hummingbot/sem.py)" = "$(printf '%s' "$SEMANTIC_B")" ]; then
     pass "(b) semantically different file left alone"
 else
     fail "(b) sem.py was overwritten"
 fi
-if [ "$(cat cm.py)" = "$(printf '%s' "$COMMENT_B")" ]; then
+if [ "$(cat hummingbot/cm.py)" = "$(printf '%s' "$COMMENT_B")" ]; then
     pass "(g) comment-text-only difference left alone"
 else
     fail "(g) cm.py was overwritten"
 fi
-if [ "$(cat st.py)" = "$(printf '%s' "$STRING_B")" ]; then
+if [ "$(cat hummingbot/st.py)" = "$(printf '%s' "$STRING_B")" ]; then
     pass "(h) blank-line change inside triple-quoted string left alone"
 else
     fail "(h) st.py was overwritten"
 fi
-if [ "$(cat owned/o.py)" = "$(printf '%s' "$TIGHT")" ]; then
+if [ "$(cat hummingbot/owned/o.py)" = "$(printf '%s' "$TIGHT")" ]; then
     pass "(c) modular-owned file left alone"
 else
     fail "(c) owned/o.py was overwritten"
@@ -130,11 +142,11 @@ fi
 
 # (e) no residue -> no commit, count 0
 new_repo
-printf '%s' "$SEMANTIC_B" > sem.py
+printf '%s' "$SEMANTIC_B" > hummingbot/sem.py
 git commit -qam "semantic only" --no-verify
 before="$(modular_commits)"
 resync_modular_format_residue ci-base
-if [ "$(modular_commits)" -eq "$before" ] && [ "$(cat sem.py)" = "$(printf '%s' "$SEMANTIC_B")" ]; then
+if [ "$(modular_commits)" -eq "$before" ] && [ "$(cat hummingbot/sem.py)" = "$(printf '%s' "$SEMANTIC_B")" ]; then
     pass "(e) no residue gives no commit"
 else
     fail "(e) unexpected commit or change"
