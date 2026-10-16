@@ -28,16 +28,15 @@
 #                                 feature         Specific functionality additions that build on top
 #                                                 of the infrastructure layer. Merged AFTER all
 #                                                 infrastructure branches are applied.
-#   build_mode:                 (ci-base only) seed (default) | incremental (not yet implemented).
+#   build_mode:                 (ci-base only) seed (default) | incremental (implemented and live since 2026-10-16).
 #                               Selects how ci-base is rebuilt; --reseed forces seed.
 #
 # Last reviewed: 2026-10-14
 
 target_branches:
   ci-base:
-    # build_mode: "seed" (default) or "incremental". "incremental" is not
-    # implemented yet (incremental ci-base plan Tasks 6-12); --reseed will
-    # force seed.
+    # build_mode: "seed" (default) or "incremental". "incremental" is implemented and live since 2026-10-16; --reseed
+    # will force seed.
     # rollback: set build_mode: seed, or run --rebuild --reseed once
     build_mode: incremental
     # _for_ci/* branches: ci-base-layer fixes merged AFTER the development
