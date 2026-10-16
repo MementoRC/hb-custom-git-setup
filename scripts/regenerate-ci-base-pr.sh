@@ -12,6 +12,7 @@
 # `git commit-tree` so NO pre-commit hooks run and the failing tree is preserved
 # byte-for-byte.
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git_push_bounded.sh"
 REPO="${1:-/home/memento/PycharmProjects/Hummingbot/hummingbot}"
 cd "$REPO"
 git fetch origin --quiet
@@ -19,7 +20,7 @@ TREE=$(git rev-parse origin/ci-base^{tree})
 PARENT=$(git rev-parse origin/development)
 MSG="ci-base snapshot for PR review ($(date +%Y-%m-%d)): squashed single-commit view of the development->ci-base delta. CI-failing state preserved so the PR surfaces gate failures. Regenerated each rebuild; not a hand-merge target."
 COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -S -m "$MSG")
-git push -f origin "${COMMIT}:refs/heads/ci-base-pr"
+git_push_bounded . -f origin "${COMMIT}:refs/heads/ci-base-pr"
 echo "ci-base-pr regenerated:"
 echo "  commit:      $COMMIT"
 echo "  tree:        $TREE  (== origin/ci-base)"

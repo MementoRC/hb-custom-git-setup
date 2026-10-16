@@ -474,7 +474,7 @@ fi
 if [ "$UPSTREAM_GATE_STATUS" = "pass" ] || [ "$UPSTREAM_GATE_STATUS" = "skipped" ]; then
     if [ "$SKIP_UPSTREAM" = false ] && [ "$UPSTREAM_STATUS" = "pass" ]; then
         log_section "$(colorize "$BLUE" "Step 1b: Push development to origin")"
-        if git push origin development > /dev/null 2>&1; then
+        if git_push_bounded . origin development > /dev/null 2>&1; then
             UPSTREAM_STATUS="success"
             log_result true "Upstream sync completed (push OK)"
         else

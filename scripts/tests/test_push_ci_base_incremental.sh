@@ -7,6 +7,10 @@ SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hummingbot-branch-track
 
 log_error() { echo "$*"; }
 
+# push_ci_base routes through git_push_bounded.
+# shellcheck disable=SC1091
+source "$(dirname "$SCRIPT")/git_push_bounded.sh"
+
 # shellcheck disable=SC1090
 source <(sed -n "/^push_ci_base() {/,/^}/p" "$SCRIPT")
 

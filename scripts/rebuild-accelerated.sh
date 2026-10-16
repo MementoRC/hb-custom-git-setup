@@ -655,7 +655,7 @@ phase_6_push() {
     fi
 
     log_step "Pushing ${TARGET_BRANCH} to origin..."
-    if git -C "${REPO_DIR}" push -f origin "${TARGET_BRANCH}" 2>&1; then
+    if git_push_bounded "${REPO_DIR}" -f origin "${TARGET_BRANCH}" 2>&1; then
         log_result true "Pushed ${TARGET_BRANCH} to origin (force push)"
         PHASE_RESULTS[6]="PASS"
 

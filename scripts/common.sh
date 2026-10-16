@@ -31,6 +31,10 @@ export RUN_LOG_DIR
 mkdir -p "$RUN_LOG_DIR"
 ln -sfn "$RUN_LOG_DIR" "${LOG_PATH}/runs/latest"
 
+# Bounded push helper (git_push_bounded): every push in the pipeline goes through it.
+# shellcheck source=git_push_bounded.sh
+source "$(dirname "${BASH_SOURCE[0]}")/git_push_bounded.sh"
+
 ###############################################################################
 # 2) PATH Configuration for Cron Environments
 ###############################################################################

@@ -208,7 +208,7 @@ sync_development_upstream() {
     # the official hummingbot/dev right away:
     #
     log_message "${YELLOW}Pushing updated $DEVELOPMENT_BRANCH to origin...${NC}"
-    if ! git push origin "$DEVELOPMENT_BRANCH"; then
+    if ! git_push_bounded . origin "$DEVELOPMENT_BRANCH"; then
         log_message "${RED}Failed to push updated $DEVELOPMENT_BRANCH to origin${NC}"
         return 1
     fi

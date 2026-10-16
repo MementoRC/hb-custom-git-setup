@@ -3853,13 +3853,13 @@ push_ci_base() {
     if [ "$mode" = "incremental" ]; then
         # Incremental ci-base only ever appends to origin/ci-base: a plain push,
         # never forced. Rejection means origin moved (a bug signal) — fail, don't force.
-        if git -C "$REPO_PATH" push origin ci-base >& /dev/null; then
+        if git_push_bounded "$REPO_PATH" origin ci-base >& /dev/null; then
             return 0
         fi
         log_error "  incremental ci-base push rejected (non-fast-forward): origin/ci-base moved; NOT forcing" >&2
         return 1
     fi
-    git -C "$REPO_PATH" push origin ci-base --force-with-lease >& /dev/null
+    git_push_bounded "$REPO_PATH" origin ci-base --force-with-lease >& /dev/null
 }
 
 gate_and_push_branch() {
@@ -4028,7 +4028,7 @@ gate_and_push_branch() {
               _push_hint="git -C \"$REPO_PATH\" push origin ci-base  (plain fast-forward; investigate origin/ci-base, do NOT force)"
           fi
           push_ci_base "${CI_BASE_BUILD_MODE_USED:-seed}" && _push_ok=true
-      elif git -C "$REPO_PATH" push origin "$_gate_branch" --force-with-lease >& /dev/null; then
+      elif git_push_bounded "$REPO_PATH" origin "$_gate_branch" --force-with-lease >& /dev/null; then
           _push_ok=true
       fi
       if [ "$_push_ok" = true ]; then
