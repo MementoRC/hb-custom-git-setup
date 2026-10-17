@@ -374,6 +374,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/fix-data-read-test-timeout
+        enabled: true
+        tier: infrastructure
+        description: "Dispose the sqlite engine in DataReadTest.tearDown (test/hummingbot/cli/test_data.py). test_to_pandas_after_detach hit the 30s pytest timeout inside sqlite during the ci-base gate; setUp created an engine whose pooled connection was never released before the TemporaryDirectory was removed. Likely cause, not reproduced. Branch based off origin/development, commit fd09308e, GPG-signed. Added 2026-10-17."
+        permanent: false
+        disable_when_in_development: true
+
       # _for_ci/purge-seed-residue: RETIRED 2026-09-15 — REDUNDANT, not folded. It deletes 39 paths (ascend_ex, cube, vertex, gateway_lp_command.py, lp_command_utils.py) that upstream development has already deleted itself, so a seed cut from current development never had them. Also accounts for the old "half-deleted connector" residue.
 
       - name: _for_ci/fix-hyperliquid-rate-flaky-rederived
