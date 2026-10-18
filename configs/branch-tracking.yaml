@@ -208,13 +208,7 @@ target_branches:
         disable_when_in_development: true
 
       # _for_ci/fix-login-prompt-retries: RETIRED 2026-07-05 — superseded by fix-login-prompt-retries-v2; local+origin deleted, entry purged
-
-      - name: _for_ci/fix-login-prompt-retries-v2
-        enabled: false  # disabled 2026-09-05: stale ci-base snapshot; superseded by -rederived
-        tier: infrastructure
-        description: "Fix 2 test gate failures in LoginPromptTest (v2 correct fix): tests missing @patch for store_password_verification (real disk write) and legacy_confs_exist (real os.listdir). Both retry tests reach the success path where these unmocked I/O calls crash. Added @patch decorators + mock params to test_login_blank_password_error_retries and test_login_password_do_not_match_error_retries. Branch from ci-base (already has while-loop from v1). Commit 3fed7b4f, GPG-signed. Added 2026-06-27."
-        permanent: false
-        disable_when_in_development: true
+      # _for_ci/fix-login-prompt-retries-v2: RETIRED 2026-10-17 — superseded by -rederived (same fix, b77c847d); local+origin deleted (tip 3fed7b4f), entry purged
 
       - name: _for_ci/fix-login-prompt-retries-rederived
         enabled: true
