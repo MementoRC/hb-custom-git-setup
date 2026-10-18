@@ -174,12 +174,16 @@ _filter_gate_ignored_tests() {
     local line arg
     while IFS= read -r line; do
         [ -n "$line" ] || continue
+        while [[ "$line" == ./* ]]; do line="${line#./}"; done
         local skip=0
         for arg in "${PYTEST_GATE_ARGS[@]}"; do
             case "$arg" in
                 --ignore=*)
                     local p="${arg#--ignore=}"
+                    while [[ "$p" == ./* ]]; do p="${p#./}"; done
                     if [ "$line" = "${p%/}" ] || [[ "$line" == "${p%/}"/* ]] || [ "$line" = "$p" ]; then
+                        # log_operation writes to stdout; stdout is the file list here
+                        log_operation "Gate filter: dropped $line (matches --ignore=$p)" >&2
                         skip=1
                         break
                     fi
