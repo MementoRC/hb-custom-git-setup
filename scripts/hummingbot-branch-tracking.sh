@@ -166,6 +166,30 @@ PYTEST_GATE_ARGS=(
     --ignore=test/hummingbot/strategy_v2/executors/twap_executor/test_twap_executor.py
 )
 
+# pytest's --ignore is NOT applied to paths passed explicitly on the command
+# line (initpaths bypass pytest_ignore_collect), so selector-chosen files that
+# live under an ignored path still get collected (e.g. dydx_v4 -> v4_proto
+# ModuleNotFoundError, exit=2). Drop such lines from a newline-separated list.
+_filter_gate_ignored_tests() {
+    local line arg
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        local skip=0
+        for arg in "${PYTEST_GATE_ARGS[@]}"; do
+            case "$arg" in
+                --ignore=*)
+                    local p="${arg#--ignore=}"
+                    if [ "$line" = "${p%/}" ] || [[ "$line" == "${p%/}"/* ]] || [ "$line" = "$p" ]; then
+                        skip=1
+                        break
+                    fi
+                    ;;
+            esac
+        done
+        [ "$skip" -eq 1 ] || printf '%s\n' "$line"
+    done
+}
+
 ###############################################################################
 # Pixi binary resolution
 # -----------------------------------------------------------------------------
@@ -3272,9 +3296,9 @@ run_tests() {
         0)
             # Filter blank lines and comments
             local test_files
-            test_files="$(grep -v '^#' "$test_list_file" | grep -v '^[[:space:]]*$' || true)"
+            test_files="$(grep -v '^#' "$test_list_file" | grep -v '^[[:space:]]*$' | _filter_gate_ignored_tests || true)"
             if [ -z "$test_files" ]; then
-                log_step "Selector returned 0 tests (dedup hit or empty selection); skipping pytest"
+                log_step "Selector returned 0 tests (dedup hit, empty selection, or all gate-ignored); skipping pytest"
                 return 0
             fi
             local test_count
