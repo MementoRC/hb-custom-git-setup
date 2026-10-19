@@ -730,6 +730,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/infra
 
+      - name: _for_overlay/shim-web-assistant
+        enabled: true
+        tier: feature
+        description: "Overlay web-assistant pilot: parity test (surface snapshot) + test-selection mapping; whole-family sys.modules shim is carried by the base"
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/subpackage-wiring
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
