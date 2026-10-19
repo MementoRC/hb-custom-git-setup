@@ -741,6 +741,9 @@ target_branches:
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
+# subpackage_tracking_require_ci (default true when absent): only advance a pin to a
+# commit whose GitHub check-runs/status are all green; otherwise keep the current pin.
+subpackage_tracking_require_ci: true
 subpackage_tracking:
   async-utils: development
   candles-feed: development

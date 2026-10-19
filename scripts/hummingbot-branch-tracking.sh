@@ -2654,6 +2654,58 @@ modular_owns_path() {
 }
 
 ###############################################################################
+# Sub-package CI gate
+# -------------------
+# subpackage_ci_green <sub-dir> <sha>: returns 0 only when the commit's GitHub
+# check-runs and combined status are all green (completed with success/skipped/
+# neutral, none pending, at least one check present). Otherwise returns 1 and
+# prints a short reason on stdout. Fails closed on any API/URL error. Uses the
+# `gh` CLI (owner/repo derived from the submodule's origin URL).
+###############################################################################
+subpackage_ci_green() {
+    local sub="$1" sha="$2" url slug
+    url="$(git -C "$sub" remote get-url origin 2>/dev/null)"
+    slug="$(printf '%s' "$url" | sed -E 's#^(git@|ssh://git@|https?://)github\.com[:/]##; s#\.git$##')"
+    case "$slug" in
+        */*) ;;
+        *) echo "cannot derive GitHub owner/repo from '$url'"; return 1 ;;
+    esac
+
+    local runs status_line
+    if ! runs="$(gh api --paginate "repos/$slug/commits/$sha/check-runs?per_page=100" \
+            --jq '.check_runs[] | "\(.status) \(.conclusion // "none")"' 2>/dev/null)"; then
+        echo "check-runs API error"; return 1
+    fi
+    if ! status_line="$(gh api "repos/$slug/commits/$sha/status" \
+            --jq '"\(.state) \(.total_count)"' 2>/dev/null)"; then
+        echo "commit status API error"; return 1
+    fi
+
+    local n_runs=0 st concl
+    while read -r st concl; do
+        [ -z "$st" ] && continue
+        n_runs=$((n_runs + 1))
+        if [ "$st" != "completed" ]; then
+            echo "pending"; return 1
+        fi
+        case "$concl" in
+            success|skipped|neutral) ;;
+            *) echo "$concl"; return 1 ;;
+        esac
+    done <<< "$runs"
+
+    local state="${status_line%% *}" n_status="${status_line##* }"
+    if [ "$n_status" -gt 0 ] && [ "$state" != "success" ]; then
+        echo "$state"; return 1
+    fi
+    if [ "$n_runs" -eq 0 ] && [ "$n_status" -eq 0 ]; then
+        echo "no checks"; return 1
+    fi
+    echo "success"
+    return 0
+}
+
+###############################################################################
 # Sub-package Auto-Tracking Bump
 # --------------------------------
 # Advances the gitlink of each sub-package listed in subpackage_tracking: to
@@ -2675,6 +2727,10 @@ bump_tracked_subpackages() {
     fi
 
     log_section "Auto-tracking sub-package pins"
+
+    local require_ci
+    require_ci="$(yq -r 'if has("subpackage_tracking_require_ci") then .subpackage_tracking_require_ci else true end' "$BRANCH_CONFIG" 2>/dev/null)"
+    [ "$require_ci" = "false" ] || require_ci=true
 
     while read -r name branch; do
         [ -z "$name" ] && continue
@@ -2722,6 +2778,14 @@ bump_tracked_subpackages() {
                 log_operation "auto-track: $name already at development tip (${recorded:0:7})"
             fi
             continue
+        fi
+
+        if [ "$require_ci" = "true" ]; then
+            local ci_reason
+            if ! ci_reason="$(subpackage_ci_green "$sub" "$target")"; then
+                log_warning "auto-track: $name ${target:0:7} not CI-green ($ci_reason) — keeping pin ${recorded:0:7}"
+                continue
+            fi
         fi
 
         if ! git -C "$sub" checkout --quiet --detach "$target"; then
