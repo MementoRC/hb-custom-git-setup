@@ -738,6 +738,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/subpackage-wiring
 
+      - name: _for_overlay/contracts-harness
+        enabled: true
+        tier: feature
+        description: "Plan 2 v2 E.1/E.2: test/hummingbot/contracts/ assert_conforms(obj, protocol) helper + non-vacuity self-test; cross_cutting test-selection rule (sub-packages/* gitlink path -> contracts tests) so every pin bump runs the core contract tests"
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/shim-web-assistant
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
