@@ -522,6 +522,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/wire-rate-limit
+        enabled: true
+        base: modular
+        tier: infrastructure
+        description: "Wire hb-rate-limit (L0 leaf, stdlib-only) at 737c4702: .gitmodules, gitlink, install-subpackages + compat-check entries, import-linter root/boundary/L0 layer+independence."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
@@ -746,6 +754,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/shim-web-assistant
 
+      - name: _for_overlay/liquidations-feed-port
+        enabled: true
+        tier: feature
+        description: "Overlay contracts pilot K.3-K.5: liquidations-feed port + contract test (feature-detected sync/async start/stop) + import-linter core-liquidations-feed-via-port; drops unmatched user_stream_tracker ignores."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/contracts-harness
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
@@ -763,6 +779,7 @@ subpackage_tracking:
   market-connector: development
   market-data: development
   market-simulator: development
+  rate-limit: development
   rate-oracle: development
   remote-iface: development
   strategy-framework: development
