@@ -3299,6 +3299,46 @@ _overlay_rebuild_extensions() {
     fi
 }
 
+# Remove stale, untracked in-place build artifacts from sub-package checkouts.
+# The accelerated compile gate (augmented candles-feed wheel build) and
+# `pixi run build` leave <mod>.<abi>.so / <mod>.c next to <mod>.py plus a
+# top-level build/ dir. After a pin moves, Python imports the stale .so over the
+# current .py. Compile gates regenerate what they need, so call this BEFORE any
+# compile/test step. Only untracked files are removed (never git clean -x: it
+# would delete ignored .worktrees/ and .pixi/).
+clean_subpackage_build_artifacts() {
+    local sub_root="$REPO_PATH/sub-packages"
+    [ -d "$sub_root" ] || return 0
+    local sub name f rel stem count
+    for sub in "$sub_root"/*/; do
+        sub="${sub%/}"
+        name="$(basename "$sub")"
+        [ -d "$sub" ] || continue
+        count=0
+        while IFS= read -r -d '' f; do
+            rel="${f#"$sub"/}"
+            stem="$(basename "$f")"
+            stem="${stem%%.*}"
+            # .so/.c files must sit next to a same-named .py (augmented outputs)
+            if [ ! -d "$f" ] && [ ! -f "$(dirname "$f")/$stem.py" ]; then
+                continue
+            fi
+            if git -C "$sub" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+                continue
+            fi
+            if [ -d "$f" ] && [ -n "$(git -C "$sub" ls-files -- "$rel" 2>/dev/null | head -n 1)" ]; then
+                continue
+            fi
+            rm -rf -- "$f" && count=$((count + 1))
+        done < <(find "$sub" \( -path "$sub/.git" -o -path '*/.worktrees' -o -path '*/.pixi' \) -prune -o \
+                      \( \( -type f \( -name '*.so' -o -name '*.c' \) \) -o \( -type d -path "$sub/build" -prune \) \) -print0 2>/dev/null)
+        if [ "$count" -gt 0 ]; then
+            log_operation "build-artifact cleanup: removed $count stale item(s) from sub-packages/$name"
+        fi
+    done
+    return 0
+}
+
 run_tests() {
     local target_branch="$1"
     local source_branch="${2:-}"
@@ -3374,6 +3414,7 @@ run_tests() {
             log_step "Selector chose $test_count tests; running pixi pytest"
             # Merge-time only: the tier-level overlay gate builds before its own pytest.
             if [ "$target_branch" = "overlay" ] && [ -n "$source_branch" ] && _tree_has_pixi_config; then
+                clean_subpackage_build_artifacts
                 _overlay_rebuild_extensions \
                     "overlay: rebuilding extensions before merge-time pytest for ${source_branch}" \
                     "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${source_branch//\//_}.log"
@@ -3959,10 +4000,22 @@ gate_and_push_branch() {
     local _changed _q_ok _quality_log _pr_script
 
       log_step "Gating $_gate_branch (quality + tests)"
-      if ! git -C "$REPO_PATH" checkout "$_gate_branch" >& /dev/null; then
-          log_error "  checkout $_gate_branch failed — aborting gate"
-          touch "$RUN_LOG_DIR/.gate_failed"
-          return 1
+      local _co_out _co_try
+      if ! _co_out="$(git -C "$REPO_PATH" checkout "$_gate_branch" 2>&1)"; then
+          if [ -e "$REPO_PATH/.git/index.lock" ]; then
+              log_warning "  checkout $_gate_branch blocked by .git/index.lock — waiting up to 30s (not deleting it)"
+              for _co_try in 1 2 3 4 5 6; do
+                  [ -e "$REPO_PATH/.git/index.lock" ] || break
+                  sleep 5
+              done
+              _co_out="$(git -C "$REPO_PATH" checkout "$_gate_branch" 2>&1)" && _co_out=""
+          fi
+          if [ -n "$_co_out" ]; then
+              printf '%s\n' "$_co_out" > "$RUN_LOG_DIR/gate_checkout_${_gate_branch}.log"
+              log_error "  checkout $_gate_branch failed — aborting gate: $(printf '%s' "$_co_out" | head -n 3 | tr '\n' ' ') (full output: $RUN_LOG_DIR/gate_checkout_${_gate_branch}.log)"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
       fi
 
       # `git checkout` moves the recorded gitlinks but does NOT touch submodule
@@ -3978,6 +4031,9 @@ gate_and_push_branch() {
               return 1
           fi
           log_detail "  submodules: synced to recorded pins"
+          # Purge stale in-place .so/.c/build left by an earlier tier's compile
+          # (accelerated augmented build); compile gates below regenerate theirs.
+          clean_subpackage_build_artifacts
       fi
 
       _q_ok=true
@@ -4591,6 +4647,7 @@ main() {
               # run against a stale .so compiled from a prior tier's sources.
               # Reuses the same `pixi run --frozen build` invocation as
               # run_tests()'s escape hatch, not a new build command.
+              clean_subpackage_build_artifacts
               if _tree_has_pixi_config; then
                   _overlay_rebuild_extensions \
                       "overlay: rebuilding extensions before pytest (pixi run build)" \
