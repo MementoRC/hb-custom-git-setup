@@ -319,6 +319,13 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/lambdaplex-snapshot-test-timeout
+        enabled: true
+        tier: infrastructure
+        description: "Widen the 1s asyncio.wait_for(resume_test_event.wait()) to 10s in the lambdaplex order-book data-source tests; test_listen_for_order_book_snapshots_log_exception timed out in the full-suite modular gate after a 1.229s loop stall (passed 5/5 in isolation). Same class as fix-injective-delegated-order-timing. Added 2026-10-25."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_ci/ignore-decibel-candles-test
         enabled: false  # disabled 2026-09-05: carries stale ci-base snapshot (19-26 automerges); payload to be re-derived onto development
         tier: infrastructure
