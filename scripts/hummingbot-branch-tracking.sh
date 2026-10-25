@@ -2116,6 +2116,80 @@ branch_reverts_upstream_content() {
     [ "$UPSTREAM_LOSS_COUNT" -gt 0 ] 2>/dev/null
 }
 
+###############################################################################
+# Does modular lose ONLY lines that are merge-base or upstream provenance?
+#
+# Returns 0 (true) when every line present in $ours_spec (modular) but absent
+# from $theirs_spec (ci-base) appears either in the merge base's copy of the
+# file or somewhere in origin/development's history of the file. Then taking
+# ci-base's version drops no modular-authored content: modular only loses text
+# that was already shared (merge base) or came from upstream. Sets
+# MODULAR_LOSS_COUNT to the number of discarded non-blank lines and
+# MODULAR_UNIQUE_COUNT to how many of them are NOT provenance (for logging).
+#
+# Why history and not "gone from development": current development still holds
+# pre-py312 lines such as Optional[...] that only ci-base transforms, so a
+# modular side carrying them is stale, not authored, yet they are not gone from
+# development. Any text that ever existed upstream counts as provenance.
+#
+# Matching is whitespace-, quote- and trailing-comma-insensitive because ruff
+# reflows upstream text (re-wraps, re-indents, re-quotes). Each discarded line
+# is normalized (all whitespace deleted, ' mapped to ", one trailing comma
+# stripped) and must be a substring of the whitespace-stripped text of the merge
+# base blob or of any historical version of the file on origin/development.
+#
+# Known blind spots: short generic lines such as ")" match trivially, which is
+# acceptable because they carry no content; and a modular commit that
+# deliberately restores an old upstream line would pass, since it is in history.
+#
+# Returns 1 (false) when nothing non-blank is discarded (other classifiers own
+# that case), when ci-base's copy is empty, when the base blob is missing
+# (e.g. add/add), or on any git error.
+#
+# $ours_spec / $theirs_spec / $base_spec are git rev-parse-able blob specs.
+# Production passes the conflict stages; the harness passes real refs.
+###############################################################################
+conflict_modular_loss_is_upstream_provenance() {
+    local file="$1" ours_spec="${2:-:2:$1}" theirs_spec="${3:-:3:$1}" base_spec="${4:-:1:$1}"
+    local ours theirs base_txt discarded corpus sha unique
+
+    MODULAR_LOSS_COUNT=0
+    MODULAR_UNIQUE_COUNT=0
+
+    ours="$(git show "$ours_spec" 2>/dev/null)" || return 1
+    theirs="$(git show "$theirs_spec" 2>/dev/null)" || return 1
+    [ -z "$theirs" ] && return 1
+    base_txt="$(git show "$base_spec" 2>/dev/null)" || return 1
+
+    discarded="$(comm -23 <(printf '%s\n' "$ours" | sort -u) <(printf '%s\n' "$theirs" | sort -u) \
+        | grep -v '^[[:space:]]*$')"
+    [ -z "$discarded" ] && return 1
+    MODULAR_LOSS_COUNT="$(printf '%s\n' "$discarded" | grep -c .)"
+
+    corpus="$(mktemp)" || return 1
+    printf '%s' "$base_txt" | tr -d '[:space:]' | tr "'" '"' > "$corpus"
+    printf '\n' >> "$corpus"
+    while IFS= read -r sha; do
+        [ -n "$sha" ] || continue
+        git show "$sha:$file" 2>/dev/null | tr -d '[:space:]' | tr "'" '"' >> "$corpus"
+        printf '\n' >> "$corpus"
+    done < <(git log --format=%H origin/development -- "$file" 2>/dev/null)
+
+    unique=""
+    local line norm
+    while IFS= read -r line; do
+        norm="$(printf '%s' "$line" | tr -d '[:space:]' | tr "'" '"')"
+        norm="${norm%,}"
+        [ -n "$norm" ] || continue
+        grep -F -q -e "$norm" "$corpus" || unique+="$line"$'\n'
+    done <<< "$discarded"
+    rm -f "$corpus"
+    unique="${unique%$'\n'}"
+    MODULAR_UNIQUE_COUNT="$(printf '%s' "$unique" | grep -c .)"
+    MODULAR_UNIQUE_LINES="$unique"
+    [ "$MODULAR_UNIQUE_COUNT" -eq 0 ]
+}
+
 # format_modular_classifier_summary <assoc_array_name>
 # Prints one "modular-merge classifier: <name>=<n>" line per key (C-locale
 # sorted, zero counts included) and a final "modular-merge classifier total=<n>".
@@ -2153,6 +2227,7 @@ sync_modular_branch() {
     MODULAR_CLASSIFIER_COUNTS=(
         ["format-only"]=0 ["ci-base-subset"]=0 ["modular-subset"]=0
         ["modular-owned"]=0 ["style-only-region"]=0 ["generated-file"]=0
+        ["upstream-provenance"]=0
     )
     # Placeholder until a merge outcome is known; left as-is on every failure path.
     printf 'modular-merge classifier total=0 (no conflict resolution completed)\n' \
@@ -2222,6 +2297,9 @@ sync_modular_branch() {
                             elif conflict_regions_style_only "$file"; then
                                 format_only+=("$file")
                                 resolve_side+=("style_regions")
+                            elif conflict_modular_loss_is_upstream_provenance "$file"; then
+                                format_only+=("$file")
+                                resolve_side+=("upstream_provenance")
                             else
                                 logical_conflicts+=("$file")
                             fi ;;
@@ -2235,7 +2313,7 @@ sync_modular_branch() {
                     return 1
                 fi
 
-                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0 generated_count=0
+                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0 generated_count=0 upstream_provenance_count=0
                 for i in "${!format_only[@]}"; do
                     f="${format_only[$i]}"
                     if [ "${resolve_side[$i]}" = "generated" ]; then
@@ -2252,6 +2330,10 @@ sync_modular_branch() {
                     elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
                         git checkout --theirs "$f" 2>/dev/null
                         modular_subset_count=$((modular_subset_count + 1))
+                    elif [ "${resolve_side[$i]}" = "upstream_provenance" ]; then
+                        git checkout --theirs -- "$f"
+                        log_detail "  upstream-provenance $f: took ci-base's version (every modular line it drops is merge-base or upstream text)"
+                        upstream_provenance_count=$((upstream_provenance_count + 1))
                     elif [ "${resolve_side[$i]}" = "style_regions" ]; then
                         # Whole-file checkout would discard the other side's
                         # non-conflicting content; only the regions take theirs.
@@ -2273,13 +2355,14 @@ sync_modular_branch() {
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions), $generated_count generated-file conflicts resolved (took ci-base))"
+                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions), $generated_count generated-file conflicts resolved (took ci-base), $upstream_provenance_count upstream-provenance conflicts resolved (took ci-base))"
                 MODULAR_CLASSIFIER_COUNTS["format-only"]=$format_only_count
                 MODULAR_CLASSIFIER_COUNTS["ci-base-subset"]=$subset_count
                 MODULAR_CLASSIFIER_COUNTS["modular-subset"]=$modular_subset_count
                 MODULAR_CLASSIFIER_COUNTS["modular-owned"]=$owned_count
                 MODULAR_CLASSIFIER_COUNTS["style-only-region"]=$style_region_count
                 MODULAR_CLASSIFIER_COUNTS["generated-file"]=$generated_count
+                MODULAR_CLASSIFIER_COUNTS["upstream-provenance"]=$upstream_provenance_count
                 record_modular_classifier_counts
             fi
         fi
