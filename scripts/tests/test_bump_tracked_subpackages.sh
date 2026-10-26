@@ -22,6 +22,15 @@ for fn in read_subpackage_tracking subpackage_ci_green bump_tracked_subpackages;
         exit 1
     fi
 done
+COMMON="$(dirname "$SCRIPT")/common.sh"
+source <(sed -n "/^git_lock_retry() {/,/^}/p" "$COMMON")
+if ! declare -F git_lock_retry >/dev/null; then
+    echo "FAIL could not load git_lock_retry from $COMMON"
+    exit 1
+fi
+# Keep lock-contention paths fast: no real backoff sleeps or lock polling.
+sleep() { :; }
+wait_for_index_lock() { return 1; }
 
 TMPDIR_T="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_T"' EXIT
@@ -258,6 +267,23 @@ if printf '%s' "$out" | grep -q "not initialized"; then
     expect_no_bump "uninitialized sub-package is skipped" "$before"
 else
     fail "uninitialized sub-package out='$out'"
+fi
+
+# 12. Persistent index.lock: staging fails, pin is NOT bumped, summary warns, no commit.
+new_fixture main
+advance_origin
+gh_set "completed success" "success 1"
+before=$(commits)
+touch "$(git rev-parse --git-dir)/index.lock"
+run_bump
+rm -f "$(git rev-parse --git-dir)/index.lock"
+if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C1" ] && [ "$(commits)" -eq "$before" ] \
+    && printf '%s' "$out" | grep -q "failed to stage foo" \
+    && printf '%s' "$out" | grep -q "NOT bumped (stage failed): foo" \
+    && ! printf '%s' "$out" | grep -q "bump committed"; then
+    pass "persistent index.lock: stage failure reported, no bump, no commit (rc=$rc)"
+else
+    fail "index.lock case rc=$rc gitlink=$(gitlink) want=$C1 commits=$before->$(commits) out='$out'"
 fi
 
 [ "$fails" -eq 0 ]
