@@ -537,6 +537,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/market-connector-primitives-shim
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Recipe-1 re-export shims for hb-market-connector #27 (PR #140, ba98bbd): hummingbot/core/data_type/funding_info.py (FundingInfo, FundingInfoUpdate), cancellation_result.py (CancellationResult) and hummingbot/connector/derivative/position.py (Position) now re-export market_connector.hb_compat.*, which keeps the legacy positional init, setters, update()/update_position() and Position repr. Pre-checks: no cimport of the 3 modules, and every importer pulls only those 4 names. Based on origin/modular (bce88f5fc2), not ci-base, because commit 609d5dae03 adds 3 ignore_imports shim edges to .importlinter's adr-0001-layers block, which exists only on modular; without them import-linter reports a false L2->L2 market_simulator -> market_connector edge walked through hummingbot. Verified 2026-10-27 in a modular scratch merge with market-connector at ba98bbd: ruff clean, identity and repr smoke OK, 809 passed / 0 failed across perpetual_trading, hedge, perpetual_market_making, spot_perpetual_arbitrage, market_data_provider, binance/hyperliquid/bybit/injective_v2 perpetual, kucoin and core/data_type; lint-imports 18 kept / 0 broken (6 ignored). Needs the market-connector pin at or past ba98bbd: if the gate tests this branch before auto-track advances the pin, the merge reverts for one cycle. Commits 2cb7bb4ade + 609d5dae03, GPG-signed. Added 2026-10-27."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
@@ -808,3 +816,8 @@ subpackage_tracking:
 modular_owned_paths:
   - hummingbot/core/data_type/user_stream_tracker_data_source.py
   - hummingbot/logger/logger.py
+  # Added 2026-10-27 (_for_bleed/market-connector-primitives-shim): each is an import from
+  # market_connector.hb_compat plus __all__, with no logic.
+  - hummingbot/core/data_type/funding_info.py
+  - hummingbot/core/data_type/cancellation_result.py
+  - hummingbot/connector/derivative/position.py
