@@ -785,6 +785,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/liquidations-feed-port
 
+      - name: _for_overlay/closure-perf
+        enabled: true
+        tier: feature
+        description: "Closure conversion F.2/F.5: report-only benchmark harness under test/perf/ (bench_b1..b4, run_benchmarks, README) + pyproject pixi task `bench`; bench_*.py are never collected by pytest or select_tests.py. Based on _for_overlay/infra 65f7d29e; parented on closure-root only to keep the chain linear. Baseline: compiled accelerated @ 67d79d68f3."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/closure-root
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
