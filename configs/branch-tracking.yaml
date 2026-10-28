@@ -777,6 +777,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/contracts-harness
 
+      - name: _for_overlay/closure-root
+        enabled: true
+        tier: feature
+        description: "Closure conversion F.3 + phase 1(a): core EventPort Protocol (hummingbot/core/ports/events.py), CompiledPubSubPort + EventBusPort adapters (core/event/event_ports.py), event contract suite (test/hummingbot/contracts/test_event_port.py); then has-a EventPort for standalone PubSub hubs (HummingbotCLI, injective publisher, mqtt). Based on contracts-harness e4d0daf9; parented on liquidations-feed-port only to keep the chain linear (both add core/ports/__init__.py, which must stay byte-identical)."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/liquidations-feed-port
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
