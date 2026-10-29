@@ -18,3 +18,15 @@ description = "Run scripts/tests/<name>.sh in the hummingbot ci env (pass <name>
 [tasks.dry-run]
 cmd = "bash scripts/pixi-launch.sh dry-run"
 description = "Run scripts/tests/dry_run_incremental_ci_base.sh in the hummingbot ci env"
+
+[feature.cockpit.dependencies]
+python = "3.12.*"
+streamlit = "*"
+
+[feature.cockpit.tasks]
+cockpit = "streamlit run cockpit/app.py --server.address 127.0.0.1 --server.port 8501 --server.headless true --browser.gatherUsageStats false --client.toolbarMode viewer"
+cockpit-check = "python -m py_compile cockpit/app.py cockpit/ghdata.py cockpit/logdata.py cockpit/needs_user.py && python cockpit/logdata.py"
+needs-user = "python cockpit/needs_user.py"
+
+[environments]
+cockpit = ["cockpit"]

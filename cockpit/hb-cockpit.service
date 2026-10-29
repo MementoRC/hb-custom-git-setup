@@ -1,0 +1,20 @@
+[Unit]
+Description=Hummingbot cockpit (Streamlit on 127.0.0.1:8501, exposed by tailscale serve)
+Documentation=file:///home/memento/PycharmProjects/Hummingbot/hummingbot_ai_docs/2026-10-29-tracking-cockpit-design.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/memento/PycharmProjects/Hummingbot/custom_git_setup
+ExecStart=/home/memento/.pixi/bin/pixi run cockpit
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# gh lives in ~/.pixi/bin and reads its token from the keyring
+Environment=HOME=/home/memento
+Environment=PATH=/home/memento/.pixi/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
