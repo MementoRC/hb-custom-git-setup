@@ -6,7 +6,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/memento/PycharmProjects/Hummingbot/custom_git_setup
-ExecStart=/home/memento/.pixi/bin/pixi run cockpit
+ExecStart=/home/memento/.pixi/bin/pixi run -e cockpit cockpit
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
