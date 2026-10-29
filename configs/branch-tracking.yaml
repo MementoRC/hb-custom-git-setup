@@ -545,6 +545,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/market-data-protocol-conformance
+        enabled: true
+        base: modular
+        tier: feature
+        description: "L3 conformance: market-data LiveMarketData satisfies strategy-framework MarketDataProtocol (moved from hb-market-data#34) Commit b2c0d78c, GPG-signed. Added 2026-10-29."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
