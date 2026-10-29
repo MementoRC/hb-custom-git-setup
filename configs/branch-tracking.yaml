@@ -785,6 +785,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/liquidations-feed-port
 
+      - name: _for_overlay/closure-book
+        enabled: true
+        tier: feature
+        description: "WS3: OrderBook/CompositeOrderBook augmented pure Python (core closure, L3). Merges closure-root."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/closure-root
+
       - name: _for_overlay/closure-perf
         enabled: true
         tier: feature
