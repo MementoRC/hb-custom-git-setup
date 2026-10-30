@@ -762,6 +762,15 @@ target_branches:
         permanent: true
         disable_when_in_development: false
 
+      - name: _for_overlay/guard-lighter-import
+        enabled: true
+        base: development
+        parent: _for_overlay/infra
+        tier: infrastructure
+        description: "Overlay-tier copy of _for_ci/guard-lighter-import (cherry-pick of 0fb6b3251f as 833c03a203, GPG-signed): lazy `from lighter import SignerClient` inside the signer method. The lighter SDK is PyPI-only and absent from pixi, and the overlay tier is cut from development without the _for_ci tier, so any overlay branch that escape-hatches to the full suite aborts at collection (closure-book and closure-perf were reverted in the 2026-10-30 03:00 cron for this). Retire once upstream adopts the lazy import (Class T). Added 2026-10-30."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_overlay/subpackage-wiring
         enabled: true
         tier: wiring
