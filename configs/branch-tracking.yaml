@@ -553,6 +553,15 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/importlinter-drop-stale-async-logger-ignore
+        enabled: true
+        base: modular
+        parent: _for_bleed/market-connector-primitives-shim
+        tier: infrastructure
+        description: "Unblocks the modular boundaries gate (broken in the 2026-10-30 03:00 cron). (1) Drops the stale async_utils.hb_compat.common -> logger ignore_imports from adr-0001-layers and l0-leaf-independence: hb-async-utils #21 (9711f02) switched to stdlib logging, and import-linter fails on unmatched ignores. (2) Moves strategy_framework.primitives into its own layer above the L0 row and out of L0 independence, since hb-strategy-framework #56 (2c096b8) re-exports data_type_primitives models (user decision 2026-10-30). Stacked on market-connector-primitives-shim, which owns modular's adr-0001-layers ignore block; a ci-base-based version conflicted. Verified: lint-imports 18 kept / 0 broken against current modular pins, git merge-tree clean vs origin/modular. Commits 9c6d3cdc + c050d4bf, GPG-signed. Added 2026-10-30."
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
