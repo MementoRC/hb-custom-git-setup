@@ -754,6 +754,8 @@ target_branches:
     # means the pytest gate logs failures but never blocks or pushes.
     base_branch: development
     gate_mode: report
+    # Merge-time gate fails a branch only for failures NEW vs the pre-merge overlay tip (false = any failure reverts).
+    gate_new_failures_only: true
     tracked_branches:
       - name: _for_overlay/infra
         enabled: true

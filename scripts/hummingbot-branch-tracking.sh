@@ -3435,6 +3435,160 @@ clean_subpackage_build_artifacts() {
     return 0
 }
 
+# Print sorted unique failing test ids from a pytest run.
+# $1 = junit xml, $2 = pytest log. Prefers the XML (testcases with a <failure>
+# or <error> child, which also covers collection errors); falls back to the
+# log's `FAILED|ERROR <nodeid>` summary lines. Returns 1 (prints nothing) when
+# neither source yields an id, i.e. the failure set is unusable.
+_gate_failed_ids() {
+    local xml="$1"
+    local log="$2"
+    local ids=""
+    if [ -s "$xml" ]; then
+        ids="$(python3 -I -c '
+import sys
+import xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+except Exception:
+    sys.exit(0)
+ids = set()
+for tc in root.iter("testcase"):
+    if tc.find("failure") is not None or tc.find("error") is not None:
+        cls, name = tc.get("classname", ""), tc.get("name", "")
+        ids.add(cls + "::" + name if cls else name)
+print("\n".join(sorted(ids)))
+' "$xml" 2>/dev/null || true)"
+    fi
+    if [ -z "$ids" ] && [ -s "$log" ]; then
+        ids="$(grep -E '^(FAILED|ERROR) ' "$log" | sed -E 's/^(FAILED|ERROR) //; s/ - .*$//' | sort -u || true)"
+    fi
+    [ -n "$ids" ] || return 1
+    printf '%s\n' "$ids"
+}
+
+# Print ids present in the post-merge failure set but not in the baseline.
+# $1 = post ids file, $2 = baseline ids file (one id per line).
+_gate_new_ids() {
+    comm -23 <(sort -u "$1") <(sort -u "$2")
+}
+
+# Restore the overlay branch at the merge commit after a baseline run.
+# $1 = merge sha, $2 = original branch name (may be empty). Returns 1 on failure.
+_gate_restore_merge_head() {
+    local merge_sha="$1"
+    local orig_branch="$2"
+    git -C "$REPO_PATH" checkout --detach --quiet "$merge_sha" || return 1
+    if [ -n "$orig_branch" ]; then
+        git -C "$REPO_PATH" checkout --quiet "$orig_branch" || return 1
+    fi
+    [ "$(git -C "$REPO_PATH" rev-parse HEAD 2>/dev/null)" = "$merge_sha" ] || return 1
+    if [ -f "$REPO_PATH/.gitmodules" ]; then
+        git -C "$REPO_PATH" submodule update --force --quiet || true
+    fi
+    return 0
+}
+
+# Overlay merge-time gate: decide whether a failing post-merge pytest run only
+# contains failures that already existed on the pre-merge overlay tip (HEAD^).
+# $1 = post-merge junit xml, $2 = post-merge log, $3 = test files (empty = full suite).
+# Returns 0 only when every post-merge failure also fails on the baseline.
+# Any unusable data returns 1 (keeps the old fail-closed behavior). HEAD is
+# always restored to the merge commit/branch before returning.
+_overlay_only_preexisting_failures() {
+    local post_xml="$1"
+    local post_log="$2"
+    local test_files="${3:-}"
+    local base_xml="${post_log%.log}_baseline.xml"
+    local base_log="${post_log%.log}_baseline.log"
+    local post_ids_file="${post_log%.log}_post.ids"
+    local base_ids_file="${post_log%.log}_baseline.ids"
+    local new_file="${post_log%.log}_new.ids"
+    local pre_file="${post_log%.log}_preexisting.ids"
+
+    if ! _gate_failed_ids "$post_xml" "$post_log" > "$post_ids_file"; then
+        log_warning "baseline: post-merge failure set unusable; treating as new failures"
+        return 1
+    fi
+
+    local pixi_cmd
+    pixi_cmd="$(_resolve_pixi_cmd)" || return 1
+
+    local merge_sha orig_branch
+    merge_sha="$(git -C "$REPO_PATH" rev-parse HEAD 2>/dev/null)" || return 1
+    orig_branch="$(git -C "$REPO_PATH" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+
+    log_step "pytest failed post-merge; running baseline on pre-merge overlay tip to find NEW failures"
+    if ! git -C "$REPO_PATH" checkout --detach --quiet HEAD^; then
+        log_warning "baseline: could not check out pre-merge tip; treating as new failures"
+        return 1
+    fi
+
+    local base_exit=0
+    if [ -f "$REPO_PATH/.gitmodules" ]; then
+        git -C "$REPO_PATH" submodule update --force --quiet || true
+    fi
+    if _tree_has_pixi_config; then
+        clean_subpackage_build_artifacts
+        _overlay_rebuild_extensions "baseline: rebuilding extensions on pre-merge overlay tip" \
+            "${post_log%.log}_baseline_build.log"
+    fi
+    # shellcheck disable=SC2086
+    (cd "$REPO_PATH" && "$pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v \
+        --junitxml="$base_xml" -o junit_family=xunit2) > "$base_log" 2>&1 || base_exit=$?
+
+    # Restore on every path from here on.
+    local restored=true
+    if ! _gate_restore_merge_head "$merge_sha" "$orig_branch"; then
+        restored=false
+    elif _tree_has_pixi_config; then
+        clean_subpackage_build_artifacts
+        _overlay_rebuild_extensions "baseline: rebuilding extensions on merge commit" \
+            "${post_log%.log}_restore_build.log"
+    fi
+    if [ "$restored" != true ]; then
+        log_error "baseline: FAILED to restore HEAD to merge commit $merge_sha (branch '${orig_branch:-detached}') — repository left in unexpected state"
+        return 1
+    fi
+
+    if [ "$base_exit" -eq 0 ]; then
+        # Baseline fully green: every post-merge failure is new.
+        : > "$base_ids_file"
+    elif ! _gate_failed_ids "$base_xml" "$base_log" > "$base_ids_file"; then
+        log_warning "baseline: failure set unusable (exit=$base_exit); treating as new failures"
+        return 1
+    fi
+
+    _gate_new_ids "$post_ids_file" "$base_ids_file" > "$new_file"
+    if [ ! -s "$new_file" ]; then
+        _gate_new_ids "$post_ids_file" /dev/null > "$pre_file"
+        log_step "baseline: all $(wc -l < "$pre_file") post-merge failure(s) already fail on the pre-merge overlay tip; see $(basename "$pre_file")"
+        return 0
+    fi
+    log_warning "baseline: $(wc -l < "$new_file") NEW failure(s) vs pre-merge overlay tip:"
+    head -n 20 "$new_file" | while IFS= read -r id; do
+        log_warning "  NEW $id"
+    done
+    return 1
+}
+
+# Merge-time overlay wrapper: 0 when a failing gate run should be tolerated
+# because it only contains pre-existing failures. $1 target, $2 source branch,
+# $3 pytest log, $4 test files (empty = full suite). Honors the
+# target_branches.overlay.gate_new_failures_only kill-switch (default true).
+_overlay_gate_tolerates_failures() {
+    local target_branch="$1"
+    local source_branch="$2"
+    local pytest_log="$3"
+    local test_files="${4:-}"
+    [ "$target_branch" = "overlay" ] && [ -n "$source_branch" ] || return 1
+    local enabled
+    # No `// true` default here: jq-style `//` also replaces an explicit false.
+    enabled="$(yq -r '.target_branches.overlay.gate_new_failures_only' "$BRANCH_CONFIG" 2>/dev/null)"
+    [ "$enabled" != "false" ] || return 1
+    _overlay_only_preexisting_failures "${pytest_log%.log}.xml" "$pytest_log" "$test_files"
+}
+
 run_tests() {
     local target_branch="$1"
     local source_branch="${2:-}"
@@ -3516,13 +3670,18 @@ run_tests() {
                     "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${source_branch//\//_}.log"
             fi
             # shellcheck disable=SC2086
-            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v \
+                --junitxml="${pytest_log%.log}.xml" -o junit_family=xunit2) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "pytest PASS ($test_count tests); see $(basename "$pytest_log")"
                 # Update state with success
                 (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mode branch --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
+                return 0
+            elif _overlay_gate_tolerates_failures "$target_branch" "$source_branch" "$pytest_log" "$test_files"; then
+                # Deliberately NOT marked as tested: a pre-existing-failure pass must not dedup future runs.
+                log_result true "pytest: only pre-existing failures ($(wc -l < "${pytest_log%.log}_preexisting.ids"))"
                 return 0
             else
                 log_result false "pytest FAIL ($test_count tests, exit=$pytest_exit); see $pytest_log"
@@ -3544,12 +3703,16 @@ run_tests() {
                 log_result false "Cython build FAILED before full suite; see $build_log"
                 return 1
             fi
-            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" -v) > "$pytest_log" 2>&1
+            (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" -v \
+                --junitxml="${pytest_log%.log}.xml" -o junit_family=xunit2) > "$pytest_log" 2>&1
             local pytest_exit=$?
             if [ "$pytest_exit" -eq 0 ]; then
                 log_result true "Full-suite pytest PASS; see $(basename "$pytest_log")"
                 (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen python "$selector_script" --mode branch --mark-success-for "$head_sha" --state-file "$selector_state") >/dev/null 2>&1 || \
                     log_step "Warning: failed to mark $head_sha as tested"
+                return 0
+            elif _overlay_gate_tolerates_failures "$target_branch" "$source_branch" "$pytest_log" ""; then
+                log_result true "pytest: only pre-existing failures ($(wc -l < "${pytest_log%.log}_preexisting.ids"))"
                 return 0
             else
                 log_result false "Full-suite pytest FAIL (exit=$pytest_exit); see $pytest_log"
