@@ -507,6 +507,15 @@ target_branches:
         permanent: false
         disable_when_in_development: false
 
+      - name: _for_bleed/logger-shim-completion
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Re-export hummingbot.logger application_warning/cli_handler/struct_logger/__init__ from hb-logger (MementoRC/hb-logger#9); logger.py re-export is in modular-regen"
+        permanent: false
+        disable_when_in_development: true
+        parent: _for_bleed/modular-regen
+
       # RE-NESTED 2026-09-12 from bleeding-edge.tracked_branches. The entry already
       # declared base: modular (it consumes the strategy_framework sub-package) but was
       # nested under bleeding-edge, and nesting — not the base: field — is what
@@ -789,13 +798,21 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/subpackage-wiring
 
+      - name: _for_overlay/logger-shim
+        enabled: true
+        tier: feature
+        description: "Compat shim: hummingbot.logger -> hb-logger package (sys.modules aliases for logger/struct_logger/application_warning/cli_handler) + app notify/network handler registration; one HummingbotLogger class (fixes position_executor/markets_recorder test_properties)"
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/shim-web-assistant
+
       - name: _for_overlay/contracts-harness
         enabled: true
         tier: feature
         description: "Plan 2 v2 E.1/E.2: test/hummingbot/contracts/ assert_conforms(obj, protocol) helper + non-vacuity self-test; cross_cutting test-selection rule (sub-packages/* gitlink path -> contracts tests) so every pin bump runs the core contract tests"
         permanent: true
         disable_when_in_development: false
-        parent: _for_overlay/shim-web-assistant
+        parent: _for_overlay/logger-shim
 
       - name: _for_overlay/liquidations-feed-port
         enabled: true
