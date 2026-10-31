@@ -353,6 +353,54 @@ SELECT_TESTS_SCRIPT="${REPO_PATH}/.github/test-selection/select_tests.py"
 SELECT_TESTS_CONFIG="${REPO_PATH}/.github/test-selection/test-selection-map.yaml"
 SELECT_TESTS_STATE="${SCRIPT_DIR}/../state/select_tests_state.json"
 UPSTREAM_GATE_TIMEOUT="20m"
+UPSTREAM_GATE_BUILD_LOG="${CRON_LOG_DIR}/upstream_gate_build_${TIMESTAMP}.log"
+CYTHON_SHA_MARKER="${CRON_LOG_DIR}/cython_build_sha.txt"
+
+# Echoes "<ABI tag>:<sha256 of Cython/C++ extension sources>" for $REPO_PATH.
+# Shared by Step 1.5 (pre-gate staleness check) and Step 2.75 (build skip).
+compute_cython_build_hash() {
+    local abi_tag pyx_files cxx_files all_ext_files
+    # Hash all .pyx + .pxd content; prefix with Python ABI tag so a Python
+    # version bump invalidates the marker even when source is unchanged.
+    abi_tag=$(cd "$REPO_PATH" && pixi run --frozen python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    # .pyx/.pxd are never gitignored, so `find` is safe for them. C/C++
+    # extension sources (e.g. hummingbot/core/cpp/PyRef.cpp) must instead be
+    # enumerated via `git ls-files`: .gitignore blanket-ignores
+    # /hummingbot/**/*.c and /hummingbot/**/*.cpp (Cython's own generated
+    # output sitting next to each .pyx) and then negates that ignore just for
+    # the hand-written /hummingbot/core/cpp/*.cpp sources. `find` would also
+    # pick up the untracked generated files and churn this SHA on every run;
+    # `git ls-files` only sees what's actually tracked. .h/.hpp aren't
+    # blanket-ignored but are included the same way for consistency.
+    pyx_files=$(find "$REPO_PATH/hummingbot" \( -name "*.pyx" -o -name "*.pxd" \) 2>/dev/null | sort)
+    # Plain `*` (no glob-magic) already crosses directory separators under
+    # git's default pathspec matching, so these also reach nested paths like
+    # hummingbot/core/cpp/PyRef.cpp without needing a literal "**/" segment.
+    cxx_files=$(git -C "$REPO_PATH" ls-files -- 'hummingbot/*.cpp' 'hummingbot/*.c' 'hummingbot/*.h' 'hummingbot/*.hpp' 2>/dev/null | awk -v p="$REPO_PATH/" '{print p $0}' | sort)
+    all_ext_files=$(printf '%s\n%s\n' "$pyx_files" "$cxx_files" | grep -v '^$' | sort)
+    if [ -z "$all_ext_files" ]; then
+        echo "${abi_tag}:no-pyx"
+    else
+        echo "${abi_tag}:$(echo "$all_ext_files" | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+    fi
+}
+
+# Step 1.5 helper: rebuild Cython extensions if the checked-out tree differs
+# from the last successful build, so the gate's pytest never imports a stale .so.
+# Returns non-zero only if the build was needed and failed.
+ensure_cython_fresh_for_gate() {
+    local current stored=""
+    current=$(compute_cython_build_hash)
+    [ -f "$CYTHON_SHA_MARKER" ] && stored=$(cat "$CYTHON_SHA_MARKER")
+    [ -n "$stored" ] && [ "$current" = "$stored" ] && return 0
+    log_step "Upstream gate: Cython extensions stale vs checked-out tree; running build first"
+    cd "$REPO_PATH" || return 1
+    if pixi run --frozen build > "$UPSTREAM_GATE_BUILD_LOG" 2>&1 9>&-; then
+        echo "$current" > "$CYTHON_SHA_MARKER"
+        return 0
+    fi
+    return 1
+}
 
 if [ "$UPSTREAM_STATUS" != "pass" ]; then
     log_step "Step 1.5: Upstream gate skipped — Step 1a did not succeed"
@@ -391,7 +439,12 @@ else
             # 9>&- : this pytest run is long-lived; close our overlap-guard fd
             # for it so a stray/orphaned test process can never keep the
             # pipeline lock held past this wrapper's own exit.
-            if timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
+            if ! ensure_cython_fresh_for_gate; then
+                UPSTREAM_GATE_STATUS="fail"
+                ERRORS+=("Upstream gate: pre-gate Cython build FAILED; see $UPSTREAM_GATE_BUILD_LOG")
+                log_result false "Upstream gate: pre-gate Cython build FAILED — see $(basename "$UPSTREAM_GATE_BUILD_LOG")"
+                [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
+            elif timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
                 --quiet --tb=short $TEST_FILES \
                 > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1 9>&-; then
                 UPSTREAM_GATE_STATUS="pass"
@@ -426,7 +479,12 @@ else
         log_step "Selector emitted escape-hatch (exit 2); running full suite via pixi pytest"
         cd "$REPO_PATH" || true
         # 9>&- : see note above — close the overlap-guard fd for this long-lived run.
-        if timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
+        if ! ensure_cython_fresh_for_gate; then
+            UPSTREAM_GATE_STATUS="fail"
+            ERRORS+=("Upstream gate: pre-gate Cython build FAILED; see $UPSTREAM_GATE_BUILD_LOG")
+            log_result false "Upstream gate: pre-gate Cython build FAILED — see $(basename "$UPSTREAM_GATE_BUILD_LOG")"
+            [ "$OVERALL_STATUS" -eq 0 ] && OVERALL_STATUS=1
+        elif timeout "$UPSTREAM_GATE_TIMEOUT" pixi run --frozen pytest \
             --quiet --tb=short \
             > "$UPSTREAM_GATE_PYTEST_LOG" 2>&1 9>&-; then
             UPSTREAM_GATE_STATUS="pass"
@@ -577,29 +635,10 @@ CYTHON_SHA_MARKER="${CRON_LOG_DIR}/cython_build_sha.txt"
 if [ "$SKIP_TRACKING" = false ] && [ "$TRACKING_STATUS" = "success" ]; then
     log_section "$(colorize "$BLUE" "Step 2.75: Cython Build")"
 
-    # Hash all .pyx + .pxd content; prefix with Python ABI tag so a Python
-    # version bump invalidates the marker even when source is unchanged.
-    PYTHON_ABI_TAG=$(cd "$REPO_PATH" && pixi run --frozen python -c "import sys; print(f'cpython-{sys.version_info.major}{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
-    # .pyx/.pxd are never gitignored, so `find` is safe for them. C/C++
-    # extension sources (e.g. hummingbot/core/cpp/PyRef.cpp) must instead be
-    # enumerated via `git ls-files`: .gitignore blanket-ignores
-    # /hummingbot/**/*.c and /hummingbot/**/*.cpp (Cython's own generated
-    # output sitting next to each .pyx) and then negates that ignore just for
-    # the hand-written /hummingbot/core/cpp/*.cpp sources. `find` would also
-    # pick up the untracked generated files and churn this SHA on every run;
-    # `git ls-files` only sees what's actually tracked. .h/.hpp aren't
-    # blanket-ignored but are included the same way for consistency.
-    PYX_FILES=$(find "$REPO_PATH/hummingbot" \( -name "*.pyx" -o -name "*.pxd" \) 2>/dev/null | sort)
-    # Plain `*` (no glob-magic) already crosses directory separators under
-    # git's default pathspec matching, so these also reach nested paths like
-    # hummingbot/core/cpp/PyRef.cpp without needing a literal "**/" segment.
-    CXX_FILES=$(git -C "$REPO_PATH" ls-files -- 'hummingbot/*.cpp' 'hummingbot/*.c' 'hummingbot/*.h' 'hummingbot/*.hpp' 2>/dev/null | awk -v p="$REPO_PATH/" '{print p $0}' | sort)
-    ALL_EXT_FILES=$(printf '%s\n%s\n' "$PYX_FILES" "$CXX_FILES" | grep -v '^$' | sort)
-    if [ -z "$ALL_EXT_FILES" ]; then
-        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:no-pyx"
-    else
-        CURRENT_PYX_SHA="${PYTHON_ABI_TAG}:$(echo "$ALL_EXT_FILES" | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
-    fi
+    # Hash computed by compute_cython_build_hash (defined before Step 1.5);
+    # the ABI tag is its prefix.
+    CURRENT_PYX_SHA=$(compute_cython_build_hash)
+    PYTHON_ABI_TAG="${CURRENT_PYX_SHA%%:*}"
     STORED_PYX_SHA=""
     [ -f "$CYTHON_SHA_MARKER" ] && STORED_PYX_SHA=$(cat "$CYTHON_SHA_MARKER")
 

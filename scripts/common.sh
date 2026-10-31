@@ -508,7 +508,7 @@ write_run_summary() {
     cat > "$target_file" <<EOF
 Hummingbot Sync Summary
 ========================
-Run:        $(date '+%Y%m%d_%H%M%S')
+Run:        ${RUN_ID:-$(date '+%Y%m%d_%H%M%S')}
 Completed:  ${end_time}
 Overall:    ${overall_label}
 
