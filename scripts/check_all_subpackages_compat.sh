@@ -118,7 +118,9 @@ for pkg in "${TARGET_SUBPACKAGES[@]}"; do
     fi
 
     echo "[RUN]  ${pkg}: pixi run ${task}" >&2
-    if (cd "$pkg_dir" && pixi run "$task" 2>&1); then
+    # --locked: fail on a stale pixi.lock instead of rewriting a tracked file
+    lock_flag=""; [ -f "$pkg_dir/pixi.lock" ] && lock_flag="--locked"
+    if (cd "$pkg_dir" && pixi run $lock_flag "$task" 2>&1); then
         RESULTS_NAME+=("$pkg")
         RESULTS_TASK+=("$task")
         RESULTS_STATUS+=("PASS")

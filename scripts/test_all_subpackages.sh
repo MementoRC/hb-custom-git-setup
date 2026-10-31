@@ -108,7 +108,9 @@ for pkg in "${TARGET_SUBPACKAGES[@]}"; do
     echo "[RUN]  ${pkg}: pixi run test" >&2
     t_start="$(date +%s%3N)"
 
-    if (cd "$pkg_dir" && pixi run test 2>&1); then
+    # --locked: fail on a stale pixi.lock instead of rewriting a tracked file
+    lock_flag=""; [ -f "$pkg_dir/pixi.lock" ] && lock_flag="--locked"
+    if (cd "$pkg_dir" && pixi run $lock_flag test 2>&1); then
         t_end="$(date +%s%3N)"
         duration=$(( t_end - t_start ))
         RESULTS_NAME+=("$pkg")
