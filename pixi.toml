@@ -19,6 +19,14 @@ description = "Run scripts/tests/<name>.sh in the hummingbot ci env (pass <name>
 cmd = "bash scripts/pixi-launch.sh dry-run"
 description = "Run scripts/tests/dry_run_incremental_ci_base.sh in the hummingbot ci env"
 
+[tasks.cron-now]
+cmd = "bash scripts/cron-now.sh"
+description = "Run hummingbot-cron-wrapper.sh detached in its own systemd user unit (escapes the caller's cgroup); refuses if the pipeline lock is held"
+
+[tasks.rebuild-now]
+cmd = "bash scripts/cron-now.sh --rebuild"
+description = "Like cron-now, but passes --rebuild to the wrapper"
+
 [feature.cockpit.dependencies]
 python = "3.12.*"
 streamlit = "*"
