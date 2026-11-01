@@ -2789,6 +2789,39 @@ subpackage_ci_green() {
 }
 
 ###############################################################################
+# Merge bumped local modular into the feature branch (plain cron only)
+# --------------------------------
+# --rebuild re-cuts $FEATURE_BRANCH from modular, so it descends from it. A plain
+# cron run only commits sub-package pin bumps to LOCAL modular (not pushed until
+# the gate step), leaving bleeding-edge/accelerated gating stale gitlinks. Merge
+# local modular (never origin/modular) in when it is not already an ancestor.
+# Conflict: abort, record in FAILED_MERGES (-> branch_merge_failures.txt), return 1.
+# Hard-exits if the feature branch cannot be checked out.
+###############################################################################
+merge_modular_into_feature_branch() {
+    [ "${REBUILD_MODE:-}" = "true" ] && return 0
+    git show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH" || return 0
+    git show-ref --verify --quiet "refs/heads/modular" || return 0
+    git merge-base --is-ancestor modular "$FEATURE_BRANCH" >/dev/null 2>&1 && return 0
+
+    log_operation "Merge modular into $FEATURE_BRANCH (modular has unmerged pin bumps)"
+    git checkout "$FEATURE_BRANCH" >& /dev/null || {
+        log_error "could not checkout $FEATURE_BRANCH to merge modular"
+        exit 1
+    }
+    local _merge_log="${RUN_LOG_DIR:-/dev/null}/modular_into_${FEATURE_BRANCH}.log"
+    if ! git -c commit.gpgsign=false merge --no-ff --no-verify \
+            -m "Merge modular into $FEATURE_BRANCH" modular >> "$_merge_log" 2>&1; then
+        git merge --abort >& /dev/null
+        log_warning "modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins"
+        FAILED_MERGES+=("modular -> $FEATURE_BRANCH")
+        FAILED_MERGES+=("  modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins")
+        return 1
+    fi
+    return 0
+}
+
+###############################################################################
 # Sub-package Auto-Tracking Bump
 # --------------------------------
 # Advances the gitlink of each sub-package listed in subpackage_tracking: to
@@ -4678,6 +4711,10 @@ main() {
 
       git checkout "$_current_branch" >& /dev/null
   fi
+
+  # Plain cron: bump_tracked_subpackages only advanced local modular. Make the
+  # feature branch descend from it so the later gates don't test stale pins.
+  merge_modular_into_feature_branch || true
 
   INDENT_LEVEL=0  # Flatten output for branch processing
 
