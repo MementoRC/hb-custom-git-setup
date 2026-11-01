@@ -3483,10 +3483,19 @@ _gate_restore_merge_head() {
         git -C "$REPO_PATH" checkout --quiet "$orig_branch" || return 1
     fi
     [ "$(git -C "$REPO_PATH" rev-parse HEAD 2>/dev/null)" = "$merge_sha" ] || return 1
-    if [ -f "$REPO_PATH/.gitmodules" ]; then
-        git -C "$REPO_PATH" submodule update --force --quiet || true
-    fi
+    # No `submodule update` here: the on-disk sub-package state must stay what
+    # the post-merge run used, or later gates import against stale pins.
     return 0
+}
+
+# Return 0 when a baseline pytest run collection-aborted, so its failure ids
+# are meaningless. $1 = pytest exit code, $2 = baseline log path.
+_gate_baseline_collection_aborted() {
+    local exit_code="$1"
+    local log="$2"
+    [ "$exit_code" -eq 2 ] && return 0
+    [ -s "$log" ] || return 1
+    grep -qE 'errors? during collection|collected [0-9]+ items? / [0-9]+ errors?' "$log"
 }
 
 # Overlay merge-time gate: decide whether a failing post-merge pytest run only
@@ -3525,9 +3534,9 @@ _overlay_only_preexisting_failures() {
     fi
 
     local base_exit=0
-    if [ -f "$REPO_PATH/.gitmodules" ]; then
-        git -C "$REPO_PATH" submodule update --force --quiet || true
-    fi
+    # Deliberately NO `submodule update` here: the baseline must run against the
+    # same on-disk sub-package state as the post-merge run, otherwise imports
+    # break on HEAD^'s stale gitlink pins.
     if _tree_has_pixi_config; then
         clean_subpackage_build_artifacts
         _overlay_rebuild_extensions "baseline: rebuilding extensions on pre-merge overlay tip" \
@@ -3536,6 +3545,8 @@ _overlay_only_preexisting_failures() {
     # shellcheck disable=SC2086
     (cd "$REPO_PATH" && "$pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v \
         --junitxml="$base_xml" -o junit_family=xunit2) > "$base_log" 2>&1 || base_exit=$?
+    local base_aborted=false
+    _gate_baseline_collection_aborted "$base_exit" "$base_log" && base_aborted=true
 
     # Restore on every path from here on.
     local restored=true
@@ -3549,6 +3560,13 @@ _overlay_only_preexisting_failures() {
     if [ "$restored" != true ]; then
         log_error "baseline: FAILED to restore HEAD to merge commit $merge_sha (branch '${orig_branch:-detached}') — repository left in unexpected state"
         return 1
+    fi
+
+    if [ "$base_aborted" = true ]; then
+        # Callers read the preexisting-ids file afterwards; keep it present.
+        _gate_new_ids "$post_ids_file" /dev/null > "$pre_file"
+        log_warning "baseline: pre-merge tip collection-aborted (exit=$base_exit); baseline INCONCLUSIVE - tolerating, NOT reverting"
+        return 3
     fi
 
     if [ "$base_exit" -eq 0 ]; then
@@ -3586,7 +3604,15 @@ _overlay_gate_tolerates_failures() {
     # No `// true` default here: jq-style `//` also replaces an explicit false.
     enabled="$(yq -r '.target_branches.overlay.gate_new_failures_only' "$BRANCH_CONFIG" 2>/dev/null)"
     [ "$enabled" != "false" ] || return 1
-    _overlay_only_preexisting_failures "${pytest_log%.log}.xml" "$pytest_log" "$test_files"
+    local rc=0
+    _overlay_only_preexisting_failures "${pytest_log%.log}.xml" "$pytest_log" "$test_files" || rc=$?
+    if [ "$rc" -eq 3 ]; then
+        # Baseline collection-aborted: inconclusive, merged without a new-failure check.
+        FAILED_MERGES+=("$source_branch -> overlay")
+        FAILED_MERGES+=("  gate inconclusive: baseline collection-aborted; merged without new-failure check")
+        return 0
+    fi
+    return "$rc"
 }
 
 run_tests() {
@@ -3806,7 +3832,18 @@ sync_branch() {
     fi
 
     merge_log="$(mktemp)"
+    wait_for_index_lock || true
+    local merge_ok=false
     if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $target" > "$merge_log" 2>&1; then
+        merge_ok=true
+    elif grep -q 'index\.lock' "$merge_log"; then
+        # Transient lock: wait once and retry the merge once.
+        wait_for_index_lock || true
+        if git -c commit.gpgsign=false merge --no-ff "$ref" -m "Auto-merge $branch into $target" > "$merge_log" 2>&1; then
+            merge_ok=true
+        fi
+    fi
+    if [ "$merge_ok" = true ]; then
         log_operation "Handle new files"
         handle_new_files || {
           log_error "Failed"
@@ -3815,6 +3852,8 @@ sync_branch() {
         }
         run_tests "$target" "$branch" || {
             log_error "Tests failed - reverting"
+            FAILED_MERGES+=("$branch -> $target")
+            FAILED_MERGES+=("  merged but pytest gate failed; reverted")
             git_quiet reset --hard HEAD^
             indent_pop
             return 1
@@ -3824,7 +3863,9 @@ sync_branch() {
     else
         local conflict_files
         conflict_files="$(git diff --name-only --diff-filter=U 2>/dev/null | head -20)"
-        git_quiet merge --abort
+        if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+            git_quiet merge --abort
+        fi
 
         # In rebuild mode, try format-aware merge before worktree rebase.
         # Feature branches are unformatted; bleeding-edge is formatted.
@@ -3946,6 +3987,8 @@ sync_branch() {
                         }
                         run_tests "$target" "$branch" || {
                             log_error "Tests failed - reverting"
+                            FAILED_MERGES+=("$branch -> $target")
+                            FAILED_MERGES+=("  merged but pytest gate failed; reverted")
                             git_quiet reset --hard HEAD^
                             indent_pop
                             return 1

@@ -7,9 +7,9 @@ set -u
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hummingbot-branch-tracking.sh"
 
 # shellcheck disable=SC1090
-source <(sed -n "/^_gate_failed_ids() {/,/^}/p;/^_gate_new_ids() {/,/^}/p" "$SCRIPT")
+source <(sed -n "/^_gate_failed_ids() {/,/^}/p;/^_gate_new_ids() {/,/^}/p;/^_gate_baseline_collection_aborted() {/,/^}/p" "$SCRIPT")
 
-for fn in _gate_failed_ids _gate_new_ids; do
+for fn in _gate_failed_ids _gate_new_ids _gate_baseline_collection_aborted; do
     if ! declare -F "$fn" >/dev/null; then
         echo "FAIL could not load $fn from $SCRIPT"
         exit 1
@@ -103,6 +103,31 @@ if [ "$got" = $'a\nb\nc' ]; then
     pass "(f) empty baseline yields all post ids"
 else
     fail "(f) empty baseline wrong: $got"
+fi
+
+# (g) baseline collection-abort detection
+echo "tests/test_a.py::test_x FAILED" > "$TMPDIR_T/normal.log"
+echo "collected 5 items / 3 errors" > "$TMPDIR_T/c1.log"
+echo "!!! Interrupted: 3 errors during collection !!!" > "$TMPDIR_T/c2.log"
+if _gate_baseline_collection_aborted 2 "$TMPDIR_T/normal.log"; then
+    pass "(g) exit 2 -> aborted"
+else
+    fail "(g) exit 2 should be aborted"
+fi
+if _gate_baseline_collection_aborted 1 "$TMPDIR_T/c1.log"; then
+    pass "(g) 'collected N items / M errors' -> aborted"
+else
+    fail "(g) collected-with-errors log should be aborted"
+fi
+if _gate_baseline_collection_aborted 1 "$TMPDIR_T/c2.log"; then
+    pass "(g) 'errors during collection' -> aborted"
+else
+    fail "(g) Interrupted log should be aborted"
+fi
+if _gate_baseline_collection_aborted 1 "$TMPDIR_T/normal.log"; then
+    fail "(g) exit 1 with normal failures should not be aborted"
+else
+    pass "(g) exit 1 normal failures -> not aborted"
 fi
 
 if [ "$fails" -eq 0 ]; then
