@@ -546,6 +546,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/wire-order-book
+        enabled: true
+        base: modular
+        tier: infrastructure
+        description: "Wire hb-order-book v0.1.0 sub-package (gitlink, install-subpackages, compat-check, .importlinter)"
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_bleed/market-connector-primitives-shim
         enabled: true
         base: modular
@@ -863,6 +871,7 @@ subpackage_tracking:
   market-connector: development
   market-data: development
   market-simulator: development
+  order-book: development
   rate-limit: development
   rate-oracle: development
   remote-iface: development
