@@ -3412,6 +3412,25 @@ _tree_has_pixi_config() {
     [ -f "$REPO_PATH/pyproject.toml" ] && grep -q '^\[tool\.pixi' "$REPO_PATH/pyproject.toml"
 }
 
+# Run `pixi run --frozen build` bounded by HB_BUILD_TIMEOUT (default 1800s), with
+# stdin detached. $1 = pixi cmd, $2 = build log. Always logs the exit code
+# (124 = timeout) so a dead/hung build is never silent. Returns the build's exit code.
+_run_bounded_build() {
+    local pixi_cmd="$1"
+    local build_log="$2"
+    local rc
+    ( cd "$REPO_PATH" && timeout "${HB_BUILD_TIMEOUT:-1800}" "$pixi_cmd" run --frozen build ) </dev/null >& "$build_log"
+    rc=$?
+    if [ "$rc" -eq 124 ]; then
+        log_error "extension build TIMED OUT after ${HB_BUILD_TIMEOUT:-1800}s (exit 124) — see $build_log"
+    elif [ "$rc" -ne 0 ]; then
+        log_error "extension build exited $rc — see $build_log"
+    else
+        log_operation "extension build exited 0"
+    fi
+    return "$rc"
+}
+
 # Rebuild compiled extensions against the current tree (overlay tier only).
 # $1 = log message, $2 = build log path. Report-only: failures are logged, never fatal.
 _overlay_rebuild_extensions() {
@@ -3423,7 +3442,7 @@ _overlay_rebuild_extensions() {
         return 0
     fi
     log_operation "$msg"
-    if ! ( cd "$REPO_PATH" && "$pixi_cmd" run --frozen build ) >& "$build_log"; then
+    if ! _run_bounded_build "$pixi_cmd" "$build_log"; then
         log_error "overlay: extension build FAILED — see $build_log (continuing; overlay pytest may run against a stale .so — report-only, does not abort the run)"
     fi
 }
@@ -3758,7 +3777,7 @@ run_tests() {
             # build dependency, so the rebuild must be explicit here.
             local build_log="${pytest_log%.log}_build.log"
             log_step "Rebuilding Cython extensions before full suite (pixi run build)"
-            if ! (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen build) > "$build_log" 2>&1; then
+            if ! _run_bounded_build "$_pixi_cmd" "$build_log"; then
                 log_result false "Cython build FAILED before full suite; see $build_log"
                 return 1
             fi
