@@ -4465,7 +4465,16 @@ gate_and_push_branch() {
           touch "$RUN_LOG_DIR/.gate_failed"
           return 1
       fi
-      if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pytest "${PYTEST_GATE_ARGS[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
+      local -a _pytest_env=()
+      if [ "$_gate_branch" = "accelerated" ]; then
+          if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci rust-build ) >& "$RUN_LOG_DIR/gate_rustbuild_${_gate_branch}.log"; then
+              log_error "  Rust build FAILED on $_gate_branch — NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci rust-build — see $RUN_LOG_DIR/gate_rustbuild_${_gate_branch}.log"
+              touch "$RUN_LOG_DIR/.gate_failed"
+              return 1
+          fi
+          _pytest_env=(HB_REQUIRE_ACCELERATED=1)
+      fi
+      if ! ( cd "$REPO_PATH" && env "${_pytest_env[@]}" "$_pixi_cmd" run --frozen -e ci pytest "${PYTEST_GATE_ARGS[@]}" ) >& "$RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"; then
           log_error "  Test gate FAILED on $_gate_branch — failing tests; NOT pushing. Inspect: cd $REPO_PATH && pixi run -e ci pytest ${PYTEST_GATE_ARGS[*]} — see $RUN_LOG_DIR/gate_pytest_${_gate_branch}.log"
           touch "$RUN_LOG_DIR/.gate_failed"
           return 1
