@@ -2812,10 +2812,16 @@ merge_modular_into_feature_branch() {
     local _merge_log="${RUN_LOG_DIR:-/dev/null}/modular_into_${FEATURE_BRANCH}.log"
     if ! git -c commit.gpgsign=false merge --no-ff --no-verify \
             -m "Merge modular into $FEATURE_BRANCH" modular >> "$_merge_log" 2>&1; then
+        local _conflicted _total _shown _detail
+        _conflicted="$(git diff --name-only --diff-filter=U 2>/dev/null)"
         git merge --abort >& /dev/null
-        log_warning "modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins"
+        _total=$(printf '%s\n' "$_conflicted" | grep -c .)
+        _shown="$(printf '%s\n' "$_conflicted" | grep . | head -n 10 | paste -sd, - | sed 's/,/, /g')"
+        _detail="conflicted: ${_shown:-unknown}"
+        [ "$_total" -gt 10 ] && _detail+=" +$((_total - 10)) more"
+        log_warning "modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins ($_detail)"
         FAILED_MERGES+=("modular -> $FEATURE_BRANCH")
-        FAILED_MERGES+=("  modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins")
+        FAILED_MERGES+=("  modular -> $FEATURE_BRANCH merge conflict; gate tests stale pins; $_detail")
         return 1
     fi
     return 0
@@ -4731,10 +4737,6 @@ main() {
       git checkout "$_current_branch" >& /dev/null
   fi
 
-  # Plain cron: bump_tracked_subpackages only advanced local modular. Make the
-  # feature branch descend from it so the later gates don't test stale pins.
-  merge_modular_into_feature_branch || true
-
   INDENT_LEVEL=0  # Flatten output for branch processing
 
   # For each target branch in the config
@@ -4760,6 +4762,15 @@ main() {
       fi
 
       log_step "$(colorize "$BLUE" "Processing target branch: $target_branch")"
+
+      # Plain cron: the modular iteration (config order: modular before
+      # bleeding-edge) has already merged _for_bleed/* base:modular branches and
+      # bumped pins on local modular. Make the feature branch descend from that
+      # finished modular BEFORE its own tracked branches merge, so the later
+      # gates don't test stale pins or a modular missing this run's wiring.
+      if [ "$target_branch" = "$FEATURE_BRANCH" ]; then
+          merge_modular_into_feature_branch || true
+      fi
 
       # For each tracked branch under that target
       local loop_indent=$INDENT_LEVEL

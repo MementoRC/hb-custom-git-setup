@@ -102,7 +102,8 @@ if [ "$rc" -eq 1 ] && [ "$(git rev-parse HEAD)" = "$before" ] \
         && [ ! -f .git/MERGE_HEAD ] \
         && [ "${#FAILED_MERGES[@]}" -eq 2 ] \
         && [ "${FAILED_MERGES[0]}" = "modular -> bleeding-edge" ] \
-        && [[ "${FAILED_MERGES[1]}" == *"gate tests stale pins"* ]]; then
+        && [[ "${FAILED_MERGES[1]}" == *"gate tests stale pins"* ]] \
+        && [[ "${FAILED_MERGES[1]}" == *"conflicted: f.txt"* ]]; then
     pass "conflict aborted and recorded (rc=$rc)"
 else
     fail "conflict rc=$rc failed=${#FAILED_MERGES[@]} status=$(git status --porcelain)"
