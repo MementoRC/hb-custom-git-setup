@@ -677,15 +677,6 @@ target_branches:
 
       # _for_bleed/dedupe-hummingbot-logger: RETIRED 2026-08-06 — superseded by _for_bleed/dedupe-hummingbot-logger-modular on the modular tier (as the prior NOTE here already recorded). Left enabled it kept re-applying local-class hunks onto modular's re-export and corrupting logger.py on bleeding-edge. local+origin deleted, entry purged. Deleted tip 50ef7ada43 -- recover with: git branch _for_bleed/dedupe-hummingbot-logger 50ef7ada43
 
-      - name: _for_bleed/logger-type-fixes
-        enabled: true
-        base: ci-base
-        tier: feature
-        description: "Salvaged from the retired _for_bleed/logger-type-cleanup: three fixes that are independent of the hb-logger dedupe. cli_handler.py StreamHandler -> StreamHandler[TextIO]; __init__.py log_encoder typed plus a not-isinstance(obj, type) guard on dataclasses.is_dataclass (which returns True for a dataclass CLASS, and asdict raises on a class); struct_logger.py _log(level, msg, (), extra=...) since Logger._log takes args positionally and the old call raised TypeError on the non-dict error path. Deliberately carries ZERO hummingbot/logger/logger.py hunks -- that file is owned by the modular tier re-export. base:ci-base because these three files have no sub-package imports."
-        permanent: false
-        disable_when_in_development: true
-        last_reviewed: "2026-08-06"
-
       - name: _for_bleed/decibel-tradetype-float
         enabled: true
         base: ci-base
