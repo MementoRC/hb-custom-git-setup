@@ -100,6 +100,7 @@ DO_NOTIFY=false
 SKIP_UPSTREAM=false
 SKIP_TRACKING=false
 SKIP_INTERFACE=false
+TRACKING_ARGS=()
 
 ###############################################################################
 # Parse Arguments
@@ -110,8 +111,12 @@ while [[ $# -gt 0 ]]; do
         --skip-upstream)    SKIP_UPSTREAM=true; shift ;;
         --skip-tracking)    SKIP_TRACKING=true; shift ;;
         --skip-interface)   SKIP_INTERFACE=true; shift ;;
+        --rebuild)          TRACKING_ARGS+=(--rebuild); shift ;;
+        --reseed)           TRACKING_ARGS+=(--reseed); shift ;;
         --help)
-            echo "Usage: $0 [--notify] [--skip-upstream] [--skip-tracking] [--skip-interface]"
+            echo "Usage: $0 [--notify] [--skip-upstream] [--skip-tracking] [--skip-interface] [--rebuild] [--reseed]"
+            echo "  --rebuild           Pass --rebuild through to hummingbot-branch-tracking.sh"
+            echo "  --reseed            Pass --reseed through to hummingbot-branch-tracking.sh"
             exit 0
             ;;
         *)
@@ -567,8 +572,11 @@ if [ "$SKIP_TRACKING" = false ]; then
     # cargo gate invocations (main()'s tier gate, ~10 call sites) are NOT
     # closing fd 9 either — too many call sites to touch safely without a
     # shell to verify with; noted here as a follow-up rather than done blind.
+    if [ ${#TRACKING_ARGS[@]} -gt 0 ]; then
+        log_step "Branch-tracking args: ${TRACKING_ARGS[*]}"
+    fi
     if [ -x "$SCRIPT_DIR/hummingbot-branch-tracking.sh" ]; then
-        if "$SCRIPT_DIR/hummingbot-branch-tracking.sh"; then
+        if "$SCRIPT_DIR/hummingbot-branch-tracking.sh" "${TRACKING_ARGS[@]}"; then
             TRACKING_STATUS="success"
             log_result true "Branch tracking completed"
         else
