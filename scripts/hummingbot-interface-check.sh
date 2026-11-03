@@ -10,6 +10,8 @@
 #   - hummingbot.strategy_v2.executors.executor_orchestrator (ExecutorOrchestrator)
 #   - hummingbot.strategy_v2.executors.data_types
 #   - hummingbot.strategy_v2.controllers.directional_trading_controller_base
+#   - Shimmed overlay surfaces listed in configs/monitored-interfaces.yaml
+#     (import + name presence, plus upstream-drift warnings)
 #
 # Exit codes: 0=COMPATIBLE, 1=error, 2=BREAKING changes
 #
@@ -27,6 +29,8 @@ VERBOSE=false
 REPORT_FILE="${LOG_PATH}/interface_check_latest.txt"
 BREAKING_CHANGES=()
 WARNINGS=()
+INTERFACES_CONFIG="${INTERFACES_CONFIG:-$CONFIG_PATH/monitored-interfaces.yaml}"
+SHIM_SUMMARIES=()
 
 ###############################################################################
 # Parse Arguments
@@ -284,6 +288,141 @@ else:
     return 0
 }
 
+check_shimmed_surfaces() {
+    log_section "$(colorize "$BLUE" "Shimmed Surfaces")"
+
+    if [ ! -s "$INTERFACES_CONFIG" ]; then
+        WARNINGS+=("shimmed surfaces: $INTERFACES_CONFIG missing or empty, skipped")
+        log_warning "Monitored-interface list missing or empty, skipping"
+        return 0
+    fi
+
+    # Output protocol (one record per line):
+    #   EMPTY | BREAKING:<msg> | WARNING:<msg> | SUMMARY:<pkg>|<modules>|<names>|<breaking>|<warnings>
+    local check_output
+    local check_status
+    check_output=$(MI_CONFIG="$INTERFACES_CONFIG" MI_REPO="$REPO_PATH" \
+        run_python_check "Shimmed surfaces" "
+import ast
+import importlib
+import os
+import subprocess
+import yaml
+
+with open(os.environ['MI_CONFIG']) as fh:
+    doc = yaml.safe_load(fh) or {}
+surfaces = doc.get('shimmed_surfaces') or {}
+internal = {m: set(v or []) for m, v in (doc.get('internal_names') or {}).items()}
+if not surfaces:
+    print('EMPTY')
+    raise SystemExit(0)
+repo = os.environ['MI_REPO']
+
+def public_names(source):
+    names = set()
+    exported = set()
+    for node in ast.parse(source).body:
+        targets = []
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            names.add(target.id)
+            if target.id == '__all__' and isinstance(node.value, (ast.List, ast.Tuple)):
+                exported.update(e.value for e in node.value.elts if isinstance(e, ast.Constant))
+    return {n for n in names if not n.startswith('_')} | exported
+
+def upstream_source(module):
+    base = module.replace('.', '/')
+    for candidate in (base + '.py', base + '/__init__.py'):
+        res = subprocess.run(['git', 'show', 'origin/development:' + candidate],
+                             cwd=repo, capture_output=True, text=True)
+        if res.returncode == 0:
+            return res.stdout
+        if 'does not exist' not in res.stderr and 'exists on disk' not in res.stderr:
+            raise RuntimeError(res.stderr.strip())
+    return None
+
+for package, modules in surfaces.items():
+    n_mod = n_names = n_break = n_warn = 0
+    for module, listed in (modules or {}).items():
+        n_mod += 1
+        listed = list(listed or [])
+        try:
+            mod = importlib.import_module(module)
+        except Exception as e:
+            print('BREAKING:%s: cannot import %s: %s' % (package, module, e))
+            n_break += 1
+            mod = None
+        if mod is not None:
+            for name in listed:
+                n_names += 1
+                if not hasattr(mod, name):
+                    print('BREAKING:%s: %s.%s missing' % (package, module, name))
+                    n_break += 1
+        try:
+            source = upstream_source(module)
+            if source is None:
+                print('WARNING:%s: %s removed/moved upstream' % (package, module))
+                n_warn += 1
+                continue
+            for name in sorted(public_names(source) - set(listed) - internal.get(module, set())):
+                print('WARNING:%s: upstream added %s.%s not in monitored list' % (package, module, name))
+                n_warn += 1
+        except Exception as e:
+            print('WARNING:%s: upstream drift check failed for %s: %s' % (package, module, e))
+            n_warn += 1
+    print('SUMMARY:%s|%d|%d|%d|%d' % (package, n_mod, n_names, n_break, n_warn))
+")
+    check_status=$?
+
+    if [ $check_status -ne 0 ]; then
+        BREAKING_CHANGES+=("shimmed surfaces: probe failed (non-ImportError crash or environment failure)")
+        log_result false "Probe failed"
+        return 1
+    fi
+
+    if echo "$check_output" | grep -q "^EMPTY$"; then
+        WARNINGS+=("shimmed surfaces: no shimmed_surfaces entries in $INTERFACES_CONFIG, skipped")
+        log_warning "Monitored-interface list is empty, skipping"
+        return 0
+    fi
+
+    local line
+    local breaking_before=${#BREAKING_CHANGES[@]}
+    while IFS= read -r line; do
+        case "$line" in
+            BREAKING:*)
+                BREAKING_CHANGES+=("${line#BREAKING:}")
+                log_error "${line#BREAKING:}"
+                ;;
+            WARNING:*)
+                WARNINGS+=("${line#WARNING:}")
+                log_warning "${line#WARNING:}"
+                ;;
+            SUMMARY:*)
+                local pkg modules names brk warn
+                IFS='|' read -r pkg modules names brk warn <<< "${line#SUMMARY:}"
+                SHIM_SUMMARIES+=("${pkg}: ${modules} modules, ${names} names checked, ${brk} breaking, ${warn} warnings")
+                log_step "${pkg}: ${modules} modules, ${names} names, ${brk} breaking, ${warn} warnings"
+                ;;
+        esac
+    done <<< "$check_output"
+
+    if [ ${#BREAKING_CHANGES[@]} -gt "$breaking_before" ]; then
+        log_result false "Shimmed surfaces changed"
+        return 1
+    fi
+
+    log_result true "Shimmed surfaces compatible"
+    return 0
+}
+
 ###############################################################################
 # Report Generation
 ###############################################################################
@@ -313,6 +452,14 @@ EOF
         echo "Warnings:" >> "$REPORT_FILE"
         for warn in "${WARNINGS[@]}"; do
             echo "  [WARN]  ${warn}" >> "$REPORT_FILE"
+        done
+        echo "" >> "$REPORT_FILE"
+    fi
+
+    if [ ${#SHIM_SUMMARIES[@]} -gt 0 ]; then
+        echo "Shimmed Surfaces:" >> "$REPORT_FILE"
+        for summary in "${SHIM_SUMMARIES[@]}"; do
+            echo "  ${summary}" >> "$REPORT_FILE"
         done
         echo "" >> "$REPORT_FILE"
     fi
@@ -351,6 +498,7 @@ check_executor_base
 check_executor_orchestrator
 check_data_types
 check_directional_controller
+check_shimmed_surfaces
 
 # Write report
 write_report

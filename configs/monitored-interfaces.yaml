@@ -1,0 +1,112 @@
+# Monitored interfaces: shimmed public surfaces of the overlay
+#
+# Purpose:
+#   Lists the legacy hummingbot.* modules that the overlay shims re-export from
+#   sub-packages, and the public names each must keep exposing. Consumed by
+#   check_shimmed_surfaces in scripts/hummingbot-interface-check.sh, which
+#   fails (BREAKING) when a listed module cannot be imported or a listed name
+#   is missing, and warns when origin/development adds public names that are
+#   not listed here.
+#
+# Owner:
+#   The orchestrator (Plan 2 v2 Q6, decided 2026-11-01).
+#
+# Adding a package:
+#   Add a new key under shimmed_surfaces named after the sub-package the shim
+#   re-exports from. Under it, add one key per legacy (pre-shim) hummingbot
+#   module path, each with the list of public names (top-level classes,
+#   functions, assignments not starting with "_", plus __all__ entries).
+#
+# Source of names:
+#   Names come from the legacy (pre-shim) public surface snapshot
+#   test/hummingbot/core/overlay_legacy_surface.json, recorded at
+#   origin/development dbffc3bed577a181277104816398399ad6705e42.
+#   The logger entries are not in that snapshot; they were derived from the
+#   same commit's hummingbot/logger/*.py with the same rule.
+
+shimmed_surfaces:
+  web-assistant:
+    hummingbot.core.web_assistant.auth:
+      - AuthBase
+    hummingbot.core.web_assistant.connections.connections_factory:
+      - ConnectionsFactory
+      - ConnectionsFactoryT
+    hummingbot.core.web_assistant.connections.data_types:
+      - EndpointRESTRequest
+      - RESTMethod
+      - RESTRequest
+      - RESTResponse
+      - WSBinaryRequest
+      - WSJSONRequest
+      - WSPlainTextRequest
+      - WSRequest
+      - WSResponse
+    hummingbot.core.web_assistant.connections.rest_connection:
+      - RESTConnection
+    hummingbot.core.web_assistant.connections.ws_connection:
+      - WSConnection
+    hummingbot.core.web_assistant.rest_assistant:
+      - RESTAssistant
+    hummingbot.core.web_assistant.rest_post_processors:
+      - RESTPostProcessorBase
+    hummingbot.core.web_assistant.rest_pre_processors:
+      - RESTPreProcessorBase
+    hummingbot.core.web_assistant.web_assistants_factory:
+      - WebAssistantsFactory
+    hummingbot.core.web_assistant.ws_assistant:
+      - WSAssistant
+    hummingbot.core.web_assistant.ws_post_processors:
+      - WSPostProcessorBase
+    hummingbot.core.web_assistant.ws_pre_processors:
+      - WSPreProcessorBase
+
+  rate-limit:
+    hummingbot.core.api_throttler.async_request_context_base:
+      - AsyncRequestContextBase
+      - MAX_CAPACITY_REACHED_WARNING_INTERVAL
+    hummingbot.core.api_throttler.async_throttler:
+      - AsyncRequestContext
+      - AsyncThrottler
+    hummingbot.core.api_throttler.async_throttler_base:
+      - AsyncThrottlerBase
+    hummingbot.core.api_throttler.data_types:
+      - DEFAULT_PATH
+      - DEFAULT_WEIGHT
+      - LinkedLimitWeightPair
+      - Limit
+      - RateLimit
+      - RequestPath
+      - RequestWeight
+      - Seconds
+      - TaskLog
+
+  logger:
+    hummingbot.logger:
+      - CRITICAL
+      - DEBUG
+      - ERROR
+      - HummingbotLogger
+      - INFO
+      - NETWORK
+      - WARNING
+      - log_encoder
+    hummingbot.logger.application_warning:
+      - ApplicationWarning
+    hummingbot.logger.cli_handler:
+      - CLIHandler
+    hummingbot.logger.logger:
+      - HummingbotLogger
+    hummingbot.logger.struct_logger:
+      - EVENT_LOG_LEVEL
+      - METRICS_LOG_LEVEL
+      - StructLogRecord
+      - StructLogger
+
+# Module-level names that are implementation details, not contract: not checked for
+# presence and not reported as upstream drift. Add here only after confirming no
+# code outside the defining module reads the name (verified 2026-11-02 for both).
+internal_names:
+  hummingbot.core.api_throttler.async_request_context_base:
+    - arc_logger        # lazy logger cache used only by AsyncRequestContextBase.logger()
+  hummingbot.logger.logger:
+    - TESTING_TOOLS     # read only by HummingbotLogger.is_testing_mode
