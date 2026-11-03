@@ -107,12 +107,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/format-upstream-residuals
-        enabled: false
-        tier: infrastructure
-        description: "SUPERSEDED 2026-09-14 by _for_ci/format-upstream-residuals-rederived. Disabled, not yet deleted, pending a green ci-base gate on the replacement. Its lp_executor.py content went stale and its merge reverted 627 live upstream lines, reinstating a parse_provider(..., default_trading_type=) call that upstream had deliberately removed; that TypeError failed 36 lp_executor tests, failed the ci-base pre-push test gate and aborted the rebuild before modular and bleeding-edge were reached."
-        permanent: false
-        disable_when_in_development: true
       - name: _for_ci/format-upstream-residuals-rederived
         enabled: true
         tier: infrastructure
