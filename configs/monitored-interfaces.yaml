@@ -102,6 +102,22 @@ shimmed_surfaces:
       - StructLogRecord
       - StructLogger
 
+  async-utils:
+    hummingbot.core.utils.async_retry:
+      - AllTriesFailedException
+      - async_retry
+    hummingbot.core.utils.async_utils:
+      - call_sync
+      - run_command
+      - safe_ensure_future
+      - safe_gather
+      - safe_wrapper
+      - wait_til
+    hummingbot.core.utils.tracking_nonce:
+      - NonceCreator
+      - get_tracking_nonce
+      - get_tracking_nonce_low_res
+
 # Module-level names that are implementation details, not contract: not checked for
 # presence and not reported as upstream drift. Add here only after confirming no
 # code outside the defining module reads the name (verified 2026-11-02 for both).

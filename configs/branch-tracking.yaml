@@ -799,13 +799,21 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/shim-web-assistant
 
+      - name: _for_overlay/shim-async-utils
+        enabled: true
+        tier: feature
+        description: "Plan 2 v2 Batch 2 compat shim: hummingbot.core.utils.{async_utils,async_retry,tracking_nonce} -> hb-async-utils (async_utils.core/retry/tracking_nonce) via sys.modules aliases in core/utils/__init__.py; legacy files kept at base content. Parity test test/hummingbot/core/utils/test_async_utils.py (G1, committed before the shim), MAPPED + legacy-surface entries, test-selection mappings. Cut from shim-web-assistant (owns the MAPPED/surface/map files). Inserted after logger-shim per user decision 2026-11-05."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/logger-shim
+
       - name: _for_overlay/contracts-harness
         enabled: true
         tier: feature
         description: "Plan 2 v2 E.1/E.2: test/hummingbot/contracts/ assert_conforms(obj, protocol) helper + non-vacuity self-test; cross_cutting test-selection rule (sub-packages/* gitlink path -> contracts tests) so every pin bump runs the core contract tests"
         permanent: true
         disable_when_in_development: false
-        parent: _for_overlay/logger-shim
+        parent: _for_overlay/shim-async-utils
 
       - name: _for_overlay/liquidations-feed-port
         enabled: true
