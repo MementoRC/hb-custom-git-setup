@@ -823,6 +823,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/contracts-harness
 
+      - name: _for_overlay/rate-oracle-port
+        enabled: true
+        tier: feature
+        description: "Core rate-oracle port backed by hb-rate-oracle>=0.2 (hb-rate-oracle#58); adapter + contract test + call-site migration"
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/liquidations-feed-port
+
       - name: _for_overlay/closure-root
         enabled: true
         tier: feature
