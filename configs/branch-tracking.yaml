@@ -573,6 +573,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/logger-install
+        enabled: true
+        base: modular
+        tier: feature
+        description: "hummingbot/__init__.py calls logger.install() when hb-logger>=1.0 (ADR 0001 logging amendment, MementoRC/hummingbot#83)"
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
