@@ -4115,9 +4115,25 @@ sync_branch() {
 # Reads the YAML config (branch-tracking.yaml) for target branch keys.
 ###############################################################################
 get_target_branches() {
-    local result
-    result="$(yq -r '.target_branches | keys[]' "$BRANCH_CONFIG" 2>/dev/null)"
-    echo "$result"
+    # Emit keys in pipeline order (each tier builds on the previous one), then
+    # any other keys in yq order, so no configured tier is dropped.
+    local -a canonical=(ci-base modular bleeding-edge accelerated)
+    local keys key canon seen
+    keys="$(yq -r '.target_branches | keys[]' "$BRANCH_CONFIG" 2>/dev/null)"
+    for canon in "${canonical[@]}"; do
+        if printf '%s\n' "$keys" | grep -qxF -- "$canon"; then
+            echo "$canon"
+        fi
+    done
+    while IFS= read -r key; do
+        [ -z "$key" ] && continue
+        seen=false
+        for canon in "${canonical[@]}"; do
+            [ "$key" = "$canon" ] && seen=true
+        done
+        [ "$seen" = "false" ] && echo "$key"
+    done <<< "$keys"
+    return 0
 }
 
 get_tracked_branches() {
@@ -4756,8 +4772,8 @@ main() {
       # format pass + merge_for_ci_branches + py312 post-merge transform).
       # Skip it here to prevent double-processing _for_ci/* branches.
       #
-      # accelerated is ALSO skipped here: get_target_branches() yields it BEFORE
-      # bleeding-edge, so merging _for_accel/* in this loop would land them on a
+      # accelerated is ALSO skipped here: get_target_branches() yields it
+      # as a separate tier from bleeding-edge, so merging _for_accel/* in this loop would land them on a
       # bleeding-edge tip that has not yet received its _for_bleed/* features.
       # The tier is built after this loop instead (see "Build the accelerated
       # tier" below).
@@ -4772,8 +4788,8 @@ main() {
 
       log_step "$(colorize "$BLUE" "Processing target branch: $target_branch")"
 
-      # Plain cron: the modular iteration (config order: modular before
-      # bleeding-edge) has already merged _for_bleed/* base:modular branches and
+      # Plain cron: the modular iteration (get_target_branches() yields
+      # pipeline order: modular before bleeding-edge) has already merged _for_bleed/* base:modular branches and
       # bumped pins on local modular. Make the feature branch descend from that
       # finished modular BEFORE its own tracked branches merge, so the later
       # gates don't test stale pins or a modular missing this run's wiring.
@@ -4804,8 +4820,9 @@ main() {
   done < <(get_target_branches)
 
   # Ensure HEAD is on bleeding-edge before the pin + final format pass.
-  # get_target_branches() yields target keys alphabetically, so the loop above
-  # processes bleeding-edge FIRST and modular LAST, leaving HEAD on modular.
+  # get_target_branches() yields target keys in pipeline order (ci-base,
+  # modular, bleeding-edge, accelerated, then others); the loop above skips
+  # ci-base/accelerated/overlay, so HEAD is left on whichever tier ran last.
   # Neither pin_aiomqtt_transport (its tier argument is log/commit-message text
   # only; its sole checkout is the pathspec form, which does not move HEAD) nor
   # the format pass below checks out a branch. Without this checkout both
