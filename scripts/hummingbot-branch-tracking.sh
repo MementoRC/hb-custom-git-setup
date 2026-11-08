@@ -4375,6 +4375,28 @@ gate_and_push_branch() {
     local _gate_branch="$1"
     local _changed _q_ok _quality_log _pr_script
 
+    # Honest ci-base reporting (cron / non-rebuild only; --rebuild just rebuilt
+    # ci-base, so its gate is never skipped). rc 2 = degraded-but-non-fatal: the
+    # caller must not abort the run. Dev ahead => the local ci-base is stale and
+    # a gate would only verify old content; unchanged => nothing new to verify.
+    if [ "$_gate_branch" = "ci-base" ] && [ "${REBUILD_MODE:-false}" != "true" ]; then
+        local _dev_ref="origin/$DEVELOPMENT_BRANCH" _cb_sha _cb_origin _stale_msg
+        if git -C "$REPO_PATH" rev-parse --verify --quiet "${_dev_ref}^{commit}" >/dev/null \
+            && ! git -C "$REPO_PATH" merge-base --is-ancestor "$_dev_ref" ci-base 2>/dev/null; then
+            _stale_msg="ci-base STALE: $_dev_ref ahead by $(git -C "$REPO_PATH" rev-list --count "ci-base..$_dev_ref" 2>/dev/null || echo '?') commits; last ci-base commit $(git -C "$REPO_PATH" log -1 --format=%cs ci-base 2>/dev/null); run rebuild-now"
+            log_warning "  $_stale_msg"
+            FAILED_MERGES+=("ci-base -> $DEVELOPMENT_BRANCH")
+            FAILED_MERGES+=("  $_stale_msg")
+            return 2
+        fi
+        _cb_sha="$(git -C "$REPO_PATH" rev-parse --verify --quiet ci-base 2>/dev/null)"
+        _cb_origin="$(git -C "$REPO_PATH" rev-parse --verify --quiet origin/ci-base 2>/dev/null)"
+        if [ -n "$_cb_sha" ] && [ "$_cb_sha" = "$_cb_origin" ]; then
+            log_detail "  ci-base unchanged (${_cb_sha:0:12}), not re-gated"
+            return 0
+        fi
+    fi
+
       log_step "Gating $_gate_branch (quality + tests)"
       local _co_out _co_try
       if ! _co_out="$(git -C "$REPO_PATH" checkout "$_gate_branch" 2>&1)"; then
@@ -4554,8 +4576,12 @@ gate_and_push_branch() {
       fi
 
       local _push_hint="git -C \"$REPO_PATH\" push origin $_gate_branch --force-with-lease"
-      local _push_ok=false
+      local _push_ok=false _push_msg="$_gate_branch gated green + pushed"
       if [ "$_gate_branch" = "ci-base" ]; then
+          # Same-SHA push is a no-op: say so instead of claiming an advance.
+          if [ "$(git -C "$REPO_PATH" rev-parse --verify --quiet ci-base 2>/dev/null)" = "$(git -C "$REPO_PATH" rev-parse --verify --quiet origin/ci-base 2>/dev/null)" ]; then
+              _push_msg="ci-base gated green (already up to date)"
+          fi
           # push_ci_base logs its own rejection message, so it is not silenced here.
           if [ "${CI_BASE_BUILD_MODE_USED:-seed}" = "incremental" ]; then
               _push_hint="git -C \"$REPO_PATH\" push origin ci-base  (plain fast-forward; investigate origin/ci-base, do NOT force)"
@@ -4565,7 +4591,7 @@ gate_and_push_branch() {
           _push_ok=true
       fi
       if [ "$_push_ok" = true ]; then
-          log_result true "$_gate_branch gated green + pushed"
+          log_result true "$_push_msg"
           # Refresh this layer's squashed single-commit review snapshot right
           # after it is pushed green, so each <branch>-pr reflects the latest
           # green tree even if a LATER branch in the loop fails its gate.
@@ -4585,6 +4611,79 @@ gate_and_push_branch() {
           touch "$RUN_LOG_DIR/.gate_failed"
           return 1
       fi
+}
+
+# ----------------------------------------------------------------------------
+# Cron incremental ci-base. origin/ci-base used to advance only under --rebuild,
+# so a plain cron run left it stale while reporting green.
+# cron_ci_base_trigger: rc 0 (and echoes the ahead-count) ONLY when ALL hold:
+#   REBUILD_MODE != true, build_mode resolves to incremental (never seed on
+#   cron), and origin/<development> is NOT an ancestor of origin/ci-base.
+# ----------------------------------------------------------------------------
+cron_ci_base_trigger() {
+    [ "${REBUILD_MODE:-false}" != "true" ] || return 1
+    local mode dev_ref="origin/$DEVELOPMENT_BRANCH"
+    mode="$(get_ci_base_build_mode 2>/dev/null)" || return 1
+    [ "$(select_ci_base_builder "$mode")" = "incremental" ] || return 1
+    git rev-parse --verify --quiet "${dev_ref}^{commit}" >/dev/null || return 1
+    git rev-parse --verify --quiet "origin/ci-base^{commit}" >/dev/null || return 1
+    ! git merge-base --is-ancestor "$dev_ref" origin/ci-base 2>/dev/null || return 1
+    git rev-list --count "origin/ci-base..$dev_ref"
+}
+
+# Puts local ci-base back on origin/ci-base after an aborted cron build and
+# returns to the branch we started on.
+_cron_ci_base_restore() {
+    local prev_branch="$1"
+    git merge --abort >& /dev/null || true
+    git reset --hard >& /dev/null || true
+    git checkout -f ci-base >& /dev/null || true
+    git reset --hard origin/ci-base >& /dev/null || true
+    [ -z "$prev_branch" ] || [ "$prev_branch" = "ci-base" ] || git checkout -f "$prev_branch" >& /dev/null || true
+}
+
+# Non-fatal by contract: always returns 0. Reuses the --rebuild functions
+# (sync_base_branch -> build_ci_base_incremental, purity assert, early gate,
+# incremental push) by running them with REBUILD_MODE=true for the duration.
+cron_incremental_ci_base() {
+    local ahead
+    git fetch origin "$DEVELOPMENT_BRANCH" ci-base >/dev/null 2>&1 || true
+    ahead="$(cron_ci_base_trigger)" || return 0
+
+    local prev_branch pre_sha reason=""
+    prev_branch="$(git rev-parse --abbrev-ref HEAD)"
+    pre_sha="$(git rev-parse origin/ci-base)"
+    log_step "ci-base: development ahead by $ahead commits; running incremental build (cron)"
+
+    REBUILD_MODE=true
+    git checkout -- pixi.lock 2>/dev/null || true
+    if ! ensure_clean_state; then
+        reason="working tree not clean"
+    elif ! sync_base_branch "ci-base"; then
+        reason="sync/merge aborted (see log above)"
+    elif ! { git checkout ci-base >& /dev/null && assert_ci_base_purity; }; then
+        reason="ci-base purity assertion failed"
+    elif ! _pixi_cmd="$(_resolve_pixi_cmd)"; then
+        reason="pixi not found"
+    elif ! gate_and_push_branch "ci-base"; then
+        reason="gate or push failed"
+    fi
+    REBUILD_MODE=false
+
+    if [ -n "$reason" ]; then
+        _cron_ci_base_restore "$prev_branch"
+        FAILED_MERGES+=("ci-base -> $DEVELOPMENT_BRANCH")
+        FAILED_MERGES+=("  incremental build failed: $reason; ci-base left at ${pre_sha:0:12}")
+        log_error "ci-base -> incremental build failed: $reason; ci-base left at ${pre_sha:0:12}; continuing with other tiers"
+        CI_BASE_CRON_HANDLED=true
+        return 0
+    fi
+
+    _pushed+=("ci-base")
+    CI_BASE_ALREADY_GATED=true
+    CI_BASE_CRON_HANDLED=true
+    git checkout -f "$prev_branch" >& /dev/null || true
+    return 0
 }
 
 # Parses CLI flags into the globals REBUILD_MODE and FORCE_RESEED.
@@ -4638,6 +4737,7 @@ main() {
   local -a _pushed=()
   local _gate_failed=false
   local CI_BASE_ALREADY_GATED=false
+  local CI_BASE_CRON_HANDLED=false
 
   if [ "$REBUILD_MODE" = "true" ]; then
       # pixi.lock churn from pixi solves is transient in this rebuild-output tree; discard
@@ -4734,6 +4834,11 @@ main() {
       # bleeding-edge", not on the finished tip e31fffd9).
 
       log_result true "Rebuild complete"
+  else
+      # Plain cron: advance ci-base incrementally BEFORE modular so modular picks
+      # up the new ci-base in this same run. Non-fatal; no-op unless development
+      # is ahead and build_mode is incremental.
+      cron_incremental_ci_base
   fi
 
   # Ensure local modular tracks origin/modular even in incremental cron mode.
@@ -5111,7 +5216,9 @@ main() {
   # the loop if the tier is actually declared in the YAML (keeps this script
   # working unmodified against older configs without the tier).
   local -a _gate_branches=()
-  [ "$CI_BASE_ALREADY_GATED" = true ] || _gate_branches+=("ci-base")
+  # CI_BASE_CRON_HANDLED: the cron incremental step already failed and recorded
+  # it; re-gating the restored (stale) ci-base would only add a duplicate STALE.
+  [ "$CI_BASE_ALREADY_GATED" = true ] || [ "$CI_BASE_CRON_HANDLED" = true ] || _gate_branches+=("ci-base")
   _gate_branches+=("modular" "$FEATURE_BRANCH")
   if yq -e '.target_branches | has("accelerated")' "$BRANCH_CONFIG" >/dev/null 2>&1; then
       _gate_branches+=("accelerated")
@@ -5121,6 +5228,9 @@ main() {
       if gate_and_push_branch "$_gate_branch"; then
           _pushed+=("$_gate_branch")
       else
+          # rc 2 = degraded-but-non-fatal (stale ci-base, already recorded in
+          # FAILED_MERGES): do not halt the downstream tiers.
+          [ "$?" -eq 2 ] && continue
           _gate_failed=true; break
       fi
   done
