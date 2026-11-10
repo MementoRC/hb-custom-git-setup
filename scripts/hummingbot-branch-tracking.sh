@@ -1262,9 +1262,9 @@ build_ci_base_from_seed() {
 ###############################################################################
 # Build ci-base INCREMENTALLY (--rebuild with build_mode: incremental)
 # ---------------------------------------------------------------------
-# Resets ci-base to origin/ci-base, merges new origin/development commits on
-# top (merge_development_incremental), then reverts _for_ci merges whose branch
-# was disabled/removed (revert_retired_for_ci_merges). Sets SEED_PRE_SYNC_SHA
+# Resets ci-base to origin/ci-base, reverts _for_ci merges whose branch was
+# disabled/removed (revert_retired_for_ci_merges), then merges new
+# origin/development commits on top (merge_development_incremental). Sets SEED_PRE_SYNC_SHA
 # (global, same contract as build_ci_base_from_seed) to the pre-merge HEAD so
 # the downstream py312/format scoping works unchanged.
 ###############################################################################
@@ -1294,12 +1294,14 @@ build_ci_base_incremental() {
     local pre_sync_sha
     pre_sync_sha=$(git rev-parse HEAD)
 
-    merge_development_incremental || {
-        log_error "Incremental development merge failed"
-        return 1
-    }
+    # Retire first: the Reverts-For-Ci trailer commits clear ownership, so a
+    # retired branch's files no longer abort the development merge below.
     revert_retired_for_ci_merges || {
         log_error "Reverting retired _for_ci merges failed"
+        return 1
+    }
+    merge_development_incremental || {
+        log_error "Incremental development merge failed"
         return 1
     }
 

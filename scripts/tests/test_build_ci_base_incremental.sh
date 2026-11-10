@@ -27,7 +27,13 @@ done
 # Task 8 is covered by its own harness; stub it here and record the call.
 REVERT_CALLED=0
 REVERT_RC=0
-revert_retired_for_ci_merges() { REVERT_CALLED=1; return "$REVERT_RC"; }
+REVERT_SAW_DEV=0
+revert_retired_for_ci_merges() {
+    REVERT_CALLED=1
+    # records whether the development merge had already landed when revert ran
+    if [ -e new.txt ]; then REVERT_SAW_DEV=1; else REVERT_SAW_DEV=0; fi
+    return "$REVERT_RC"
+}
 
 TMPDIR_T="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_T"' EXIT
@@ -99,6 +105,13 @@ else
     fail "(a) rc=$rc trailer=$trailer pre=$SEED_PRE_SYNC_SHA expected_pre=$origin_tip revert=$REVERT_CALLED"
 fi
 
+# ---------- (a3) retire-then-merge in the same run: revert runs BEFORE the development merge
+if [ "$REVERT_SAW_DEV" -eq 0 ]; then
+    pass "(a3) revert_retired_for_ci_merges ran before merge_development_incremental"
+else
+    fail "(a3) revert step ran after the development merge"
+fi
+
 # ---------- (a2) nothing new on development: succeeds, no new commit
 new_repo
 origin_tip="$(git rev-parse origin/ci-base)"
@@ -130,8 +143,8 @@ dev_advance new.txt new
 REVERT_RC=1
 build_ci_base_incremental >/dev/null 2>&1; rc=$?
 REVERT_RC=0
-if [ "$rc" -eq 1 ]; then
-    pass "(b2) revert_retired_for_ci_merges failure -> rc 1"
+if [ "$rc" -eq 1 ] && [ ! -e new.txt ]; then
+    pass "(b2) revert_retired_for_ci_merges failure -> rc 1, development not merged"
 else
     fail "(b2) rc=$rc"
 fi
