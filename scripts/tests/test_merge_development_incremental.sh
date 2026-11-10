@@ -14,7 +14,7 @@ log_warning() { echo "$*"; }
 CI_BASE_SEED_TAG=ci-base-seed-test
 
 # shellcheck disable=SC1090
-source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^is_logical_conflict_path() {/,/^}/p;/^merge_development_incremental() {/,/^}/p" "$SCRIPT")
+source <(sed -n "/^ci_base_incremental_preconditions() {/,/^}/p;/^compute_for_ci_owned() {/,/^}/p;/^is_logical_conflict_path() {/,/^}/p;/^is_ci_base_owned_path() {/,/^}/p;/^merge_development_incremental() {/,/^}/p" "$SCRIPT")
 
 for fn in ci_base_incremental_preconditions compute_for_ci_owned merge_development_incremental; do
     if ! declare -F "$fn" >/dev/null; then
@@ -53,7 +53,9 @@ new_repo() {
     git config commit.gpgsign false
     g checkout -q -b development
     local f
-    for f in base.txt owned.txt gen.txt gen2.txt pyproject.toml .pre-commit-config.yaml; do
+    mkdir -p .github/actions/install_env_and_hb .github/workflows
+    for f in base.txt owned.txt gen.txt gen2.txt pyproject.toml .pre-commit-config.yaml \
+             .github/actions/install_env_and_hb/action.yml .github/workflows/workflow.yml .github/workflows/other.yml; do
         echo "0" > "$f"
     done
     g add -A
@@ -70,7 +72,8 @@ new_repo() {
     g checkout -q ci-base
     g merge -q --no-verify --no-ff x -m "Auto-merge _for_ci/X into ci-base"
     g branch -q -D x
-    for f in gen.txt gen2.txt pyproject.toml .pre-commit-config.yaml; do
+    for f in gen.txt gen2.txt pyproject.toml .pre-commit-config.yaml \
+             .github/actions/install_env_and_hb/action.yml .github/workflows/workflow.yml .github/workflows/other.yml; do
         echo "ci" > "$f"
     done
     g add -A
@@ -196,6 +199,31 @@ if [ "$rc" -eq 1 ] && unchanged "$before" && [ "$(cat gen.txt)" = ci ] && [ ! -s
     pass "(h) mixed -> 1, nothing half-resolved"
 else
     fail "(h) rc=$rc out=[$out]"
+fi
+
+# ---------- (i) ci-base-owned .github paths -> ours, KEEP-OURS logged
+new_repo
+dev_advance .github/actions/install_env_and_hb/action.yml=dev .github/workflows/workflow.yml=dev
+out="$(merge_development_incremental 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat .github/actions/install_env_and_hb/action.yml)" = ci ] \
+    && [ "$(cat .github/workflows/workflow.yml)" = ci ] \
+    && echo "$out" | grep -q 'KEEP-OURS .github/actions/install_env_and_hb/action.yml' \
+    && echo "$out" | grep -q 'KEEP-OURS .github/workflows/workflow.yml' \
+    && [ -z "$(git status --porcelain)" ]; then
+    pass "(i) owned .github conflicts -> ours + KEEP-OURS logged"
+else
+    fail "(i) rc=$rc out=[$out]"
+fi
+
+# ---------- (j) non-owned .github/* conflict still aborts as logical
+new_repo
+dev_advance .github/workflows/other.yml=dev
+before="$(git rev-parse HEAD)"
+out="$(merge_development_incremental 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && unchanged "$before" && echo "$out" | grep -q 'logical-conflict'; then
+    pass "(j) non-owned .github conflict -> 1, unchanged"
+else
+    fail "(j) rc=$rc out=[$out]"
 fi
 
 [ "$fails" -eq 0 ]

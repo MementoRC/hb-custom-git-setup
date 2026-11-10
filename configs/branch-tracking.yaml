@@ -869,6 +869,7 @@ target_branches:
         description: "remote_iface messages.py characterization tests (Plan 2 v2 G3); clean merge into overlay verified 2026-11-09"
         permanent: true
         disable_when_in_development: false
+        parent: _for_overlay/infra
 
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).

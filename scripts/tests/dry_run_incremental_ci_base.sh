@@ -62,7 +62,7 @@ ci_tree="NONE"
 for fn in branch_exists git_lock_retry git_operation log_merge_failure; do
     load_fn "$COMMON" "$fn"
 done
-for fn in is_logical_conflict_path merge_development_incremental build_ci_base_incremental \
+for fn in is_logical_conflict_path is_ci_base_owned_path merge_development_incremental build_ci_base_incremental \
           ci_base_incremental_preconditions compute_for_ci_owned revert_retired_for_ci_merges \
           get_enabled_for_ci_branches merge_for_ci_branches get_branch_parent \
           mark_branch_not_landed branch_did_not_land skip_if_parent_failed take_merge_stage \
@@ -136,7 +136,9 @@ while IFS= read -r -d '' item; do
 done < "$mt_out"
 echo "development conflicts vs origin/ci-base: ${#dev_conflicts[@]}"
 for f in "${dev_conflicts[@]}"; do
-    if is_logical_conflict_path "$f"; then
+    if is_ci_base_owned_path "$f"; then
+        echo "KEEP-OURS $f (resolved by merge_development_incremental; not a failure)"
+    elif is_logical_conflict_path "$f"; then
         logical_count=$((logical_count + 1))
         logical_paths+=("dev-merge $f")
     fi

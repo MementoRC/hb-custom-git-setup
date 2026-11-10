@@ -1018,6 +1018,16 @@ is_logical_conflict_path() {
     esac
 }
 
+# is_ci_base_owned_path <path>: 0 if <path> is a ci-base pixi CI file whose
+# upstream (conda CI) edits are irrelevant: a development conflict on it
+# resolves to ci-base's version (KEEP-OURS), evaluated before the logical rule.
+is_ci_base_owned_path() {
+    case "$1" in
+        .github/actions/install_env_and_hb/action.yml|.github/workflows/workflow.yml) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 ###############################################################################
 # merge_development_incremental   (mutating; operates on the checked-out HEAD)
 # Merges origin/${DEVELOPMENT_BRANCH:-development} into HEAD (ci-base, already
@@ -1077,6 +1087,10 @@ merge_development_incremental() {
                 .pre-commit-config.yaml)
                     ours_paths+=("$f") ;;
                 *)
+                    if is_ci_base_owned_path "$f"; then
+                        ours_paths+=("$f")
+                        continue
+                    fi
                     if is_logical_conflict_path "$f"; then
                         git merge --abort >/dev/null 2>&1
                         git reset -q --hard "$start_sha"
@@ -1094,6 +1108,9 @@ merge_development_incremental() {
         done
 
         for f in "${ours_paths[@]}"; do
+            if is_ci_base_owned_path "$f"; then
+                log_operation "KEEP-OURS $f (upstream ${CI_BASE_LAST_DEV_MERGED:0:12}..${d_new:0:12})"
+            fi
             if git ls-files -u -- "$f" | awk '$3==2{f=1} END{exit !f}'; then
                 git checkout --ours -- "$f" && git add -- "$f"
             else
@@ -1192,7 +1209,10 @@ build_ci_base_from_seed() {
                     # logical conflict worth aborting the rebuild over.
                     ours_conflicts+=("$file") ;;
                 *)
-                    if is_logical_conflict_path "$file"; then
+                    if is_ci_base_owned_path "$file"; then
+                        log_operation "KEEP-OURS $file (upstream seed..${dev_sha:0:12})"
+                        ours_conflicts+=("$file")
+                    elif is_logical_conflict_path "$file"; then
                         logical_conflicts+=("$file")
                     else
                         format_only+=("$file")
