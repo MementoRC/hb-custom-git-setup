@@ -2850,6 +2850,42 @@ merge_modular_into_feature_branch() {
 }
 
 ###############################################################################
+# Merge origin/ci-base into the checked-out modular (plain cron)
+# --------------------------------
+# cron_incremental_ci_base pushes a new ci-base on plain cron, and
+# sync_modular_branch (the only other place this merge happens) is
+# --rebuild-only. Assumes modular is checked out. Deliberately NOT skipped
+# under REBUILD_MODE: sync_modular_branch already merged ci-base, so the
+# ancestor check makes this a no-op there.
+# Conflict: abort, record in FAILED_MERGES, return 1; modular stays put.
+###############################################################################
+merge_ci_base_into_modular() {
+    if git merge-base --is-ancestor origin/ci-base modular >/dev/null 2>&1; then
+        log_operation "modular already contains origin/ci-base"
+        return 0
+    fi
+
+    local _cibase_log="${RUN_LOG_DIR:-/dev/null}/ci-base_into_modular.log"
+    if git -c commit.gpgsign=false merge --no-ff --no-verify \
+            -m "Merge ci-base into modular (cron incremental)" origin/ci-base >> "$_cibase_log" 2>&1; then
+        log_operation "Merged origin/ci-base into modular ($(git rev-parse --short HEAD))"
+        return 0
+    fi
+
+    local _conflicted _total _shown _detail
+    _conflicted="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+    git merge --abort >& /dev/null
+    _total=$(printf '%s\n' "$_conflicted" | grep -c .)
+    _shown="$(printf '%s\n' "$_conflicted" | grep . | head -n 10 | paste -sd, - | sed 's/,/, /g')"
+    _detail="conflicted: ${_shown:-unknown}"
+    [ "$_total" -gt 10 ] && _detail+=" +$((_total - 10)) more"
+    log_warning "ci-base -> modular merge conflict; modular stays at origin/modular ($_detail)"
+    FAILED_MERGES+=("ci-base -> modular")
+    FAILED_MERGES+=("  ci-base -> modular merge conflict; modular not advanced; $_detail")
+    return 1
+}
+
+###############################################################################
 # Sub-package Auto-Tracking Bump
 # --------------------------------
 # Advances the gitlink of each sub-package listed in subpackage_tracking: to
@@ -4865,7 +4901,8 @@ main() {
 
   # Ensure local modular tracks origin/modular even in incremental cron mode.
   # sync_modular_branch (which does this for --rebuild) is gated above; without
-  # this block, direct commits to origin/modular wouldn't propagate.
+  # this block, direct commits to origin/modular wouldn't propagate. This block
+  # also merges the new origin/ci-base into modular on plain cron.
   if git show-ref --verify --quiet "refs/heads/modular"; then
       git fetch origin modular >/dev/null 2>&1 || log_operation "modular fetch failed (non-fatal)"
       local _current_branch
@@ -4876,6 +4913,9 @@ main() {
       else
           log_operation "modular not fast-forwardable to origin/modular (diverged or already at tip)"
       fi
+
+      # Plain cron: pull the new origin/ci-base into modular (no-op on --rebuild).
+      merge_ci_base_into_modular || true
 
       # Auto-advance sub-package gitlinks even in incremental (non-rebuild) mode.
       # bump_tracked_subpackages() previously only ran inside sync_modular_branch(),
