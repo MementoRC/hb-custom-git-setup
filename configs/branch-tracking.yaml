@@ -871,6 +871,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/infra
 
+      - name: _for_ci/guard-optional-sdk-tests
+        enabled: true
+        base: development
+        tier: infrastructure
+        description: "test-only importorskip guards for decibel/aptos_sdk/v4_proto; overlay is cut from development and lacks the _for_ci tier (10 collection errors 2026-11-12)"
+        permanent: false
+        disable_when_in_development: true
+
 # Sub-packages whose gitlink should auto-advance to a branch tip on every --rebuild.
 # Anything NOT listed here keeps its static pin (recorded by _for_bleed/modular-wiring).
 # Only add a sub-package here if its named branch is always rebuild-safe.
