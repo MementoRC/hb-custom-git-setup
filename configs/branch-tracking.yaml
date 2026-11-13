@@ -581,6 +581,31 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/canonical-enum-reexports
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Recipe-1 re-exports: MarketEvent/OrderBookEvent from hb-event-bus, NetworkStatus from hb-data-type-primitives (plan MementoRC/hummingbot#76; verified on modular a7534355 2026-11-13)"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/simulated-connector-shim
+        enabled: true
+        base: modular
+        tier: feature
+        description: "Simulated connector shim over hb-market-simulator (verified on modular a7534355 2026-11-13: test_simulated_connector, client_order_tracker, in_flight_order)"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/importlinter-l1-layer
+        enabled: true
+        base: modular
+        parent: _for_bleed/importlinter-drop-stale-async-logger-ignore
+        tier: infrastructure
+        description: "import-linter layers contract: L1 row (web_assistant) + interim strategy_framework.primitives row (drop after hb-data-type-primitives#43 / hb-strategy-framework#73); lint-boundaries 18/18 KEPT"
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
