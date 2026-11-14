@@ -73,7 +73,8 @@ for fn in is_logical_conflict_path is_ci_base_owned_path merge_development_incre
           conflict_is_format_only py_pair_format_equivalent conflict_gitignore_pattern_subset conflict_side_is_subset \
           conflict_ci_base_is_subset conflict_modular_is_subset \
           conflict_regions_variant conflict_regions_style_only \
-          conflict_modular_loss_is_upstream_provenance; do
+          conflict_modular_loss_is_upstream_provenance \
+          conflict_regions_import_only _modular_f_diagnostics conflict_import_regions_ours; do
     load_fn "$SCRIPT" "$fn"
 done
 
@@ -246,6 +247,8 @@ else
             name="style-only-region"
         elif conflict_modular_loss_is_upstream_provenance "$file"; then
             name="upstream-provenance"
+        elif conflict_import_regions_ours "$file"; then
+            name="import-only-region"
         fi
         if [ -n "$name" ]; then
             classifier_count=$((classifier_count + 1))

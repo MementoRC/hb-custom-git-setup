@@ -101,6 +101,10 @@ ATTEMPTED_MERGES=0
 # plan D3). Reset and filled by sync_modular_branch(), derived from its
 # existing *_count locals; flushed to $RUN_LOG_DIR/modular_classifier_counts.txt.
 declare -A MODULAR_CLASSIFIER_COUNTS=()
+# Output of classify_and_resolve_modular_conflicts(): per-classifier counts and
+# path -> classifier name for the conflicts it resolved (reset on every call).
+declare -A MCR_COUNTS=()
+declare -A MCR_RESOLVED_BY=()
 
 ###############################################################################
 # Parent-failure cascade tracking
@@ -2092,6 +2096,105 @@ resolve_conflict_regions_theirs() {
 }
 
 ###############################################################################
+# Import-only region rule (conflict_import_regions_ours).
+# Last in the chain. Covers conflicts whose regions are ONLY imports, e.g. a
+# typing-style drift where each side edited the same import block while git
+# merged the rest of the file cleanly. Resolution: every region takes OURS
+# (modular), text outside the regions stays git's merge. Accepted only when
+# ruff shows the resolved file has no F821/F811 diagnostic the ours blob (stage
+# :2) lacks, so a name that ci-base's merged code needs but ours' import block
+# dropped (or a doubled import) still aborts. No usable ruff => decline.
+###############################################################################
+# $1=conflicted file. rc 0 only when every line of every conflict region, on
+# both sides, is an import statement, part of a parenthesised import, blank or
+# a comment (the diff3 base section is not a side and is skipped). rc 1 on
+# anything else, on malformed/nested markers and on a file with no region.
+conflict_regions_import_only() {
+    awk '
+        /^<<<<<<< / { if (st != 0) { bad = 1; exit } st = 1; n++; depth = 0; next }
+        /^\|\|\|\|\|\|\|/ && st == 1 { st = 2; next }
+        /^=======$/ && (st == 1 || st == 2) { if (depth != 0) { bad = 1; exit } st = 3; next }
+        /^>>>>>>> / { if (st != 3 || depth != 0) { bad = 1; exit } st = 0; next }
+        st == 0 || st == 2 { next }
+        {
+            if ($0 ~ /^[ \t]*$/ || $0 ~ /^[ \t]*#/) next
+            code = $0
+            sub(/[ \t]+#.*$/, "", code)
+            if (index(code, ";") || index(code, "\\") || index(code, "\"") || index(code, "\047")) { bad = 1; exit }
+            if (depth == 0 && code !~ /^[ \t]*(import|from)[ \t]/) { bad = 1; exit }
+            if (code !~ /^[ \t]*[A-Za-z0-9_., \t*()]+$/) { bad = 1; exit }
+            depth += gsub(/\(/, "(", code) - gsub(/\)/, ")", code)
+            if (depth < 0) { bad = 1; exit }
+        }
+        END { if (bad || st != 0 || n == 0) exit 1 }
+    ' "$1"
+}
+
+# $1=ruff command  $2=file. Prints the sorted F821/F811 diagnostics with
+# path/line numbers stripped. rc 1 when ruff did not demonstrably run (missing
+# tool, syntax error, exit other than 0/1, exit 1 without any diagnostic line).
+_modular_f_diagnostics() {
+    local ruff_cmd="$1" file="$2" out rc
+    out=$($ruff_cmd check --select F821,F811,F401 --no-fix --no-cache --target-version py312 --output-format concise "$file" 2>/dev/null)
+    rc=$?
+    [ "$rc" -le 1 ] || return 1
+    if [ "$rc" -eq 1 ]; then
+        grep -qE ':[0-9]+:[0-9]+: ' <<< "$out" || return 1
+    fi
+    grep -qE 'invalid-syntax|E999' <<< "$out" && return 1
+    grep -E ': (F821|F811) ' <<< "$out" | sed -E 's/^[^:]*:[0-9]+:[0-9]+: //; s/ from line [0-9]+//' | LC_ALL=C sort -u
+    return 0
+}
+
+conflict_import_regions_ours() {
+    local file="$1" ruff_cmd resolved ours_blob old new rc=1
+
+    case "$file" in
+        *.py) ;;
+        *) return 1 ;;
+    esac
+
+    conflict_regions_import_only "$file" || return 1
+
+    if command -v ruff >/dev/null 2>&1; then
+        ruff_cmd="ruff"
+    elif command -v pixi >/dev/null 2>&1; then
+        ruff_cmd="pixi run -e ci ruff"
+    else
+        return 1
+    fi
+    $ruff_cmd --version >/dev/null 2>&1 || return 1
+
+    resolved=$(mktemp --suffix=.py) || return 1
+    ours_blob=$(mktemp --suffix=.py) || { rm -f "$resolved"; return 1; }
+
+    if conflict_regions_variant "$file" ours > "$resolved" 2>/dev/null &&
+       git show ":2:$file" > "$ours_blob" 2>/dev/null &&
+       old=$(_modular_f_diagnostics "$ruff_cmd" "$ours_blob") &&
+       new=$(_modular_f_diagnostics "$ruff_cmd" "$resolved") &&
+       [ -z "$(LC_ALL=C comm -13 <(printf '%s\n' "$old") <(printf '%s\n' "$new"))" ]; then
+        rc=0
+    fi
+
+    rm -f "$resolved" "$ours_blob"
+    return $rc
+}
+
+# Rewrite the conflicted working-tree file with every region replaced by its
+# OURS side. Text outside the regions is untouched.
+resolve_conflict_regions_ours() {
+    local file="$1" tmp
+    tmp=$(mktemp) || return 1
+    if conflict_regions_variant "$file" ours > "$tmp" 2>/dev/null; then
+        cat "$tmp" > "$file" || { rm -f "$tmp"; return 1; }
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+###############################################################################
 # Would taking the branch's side of this conflict revert content that
 # origin/development CURRENTLY has?
 #
@@ -2240,6 +2343,115 @@ record_modular_classifier_counts() {
     while IFS= read -r line; do log_detail "  $line"; done < "$out"
 }
 
+# classify_and_resolve_modular_conflicts <base_label> <modular_label>
+# Shared per-file classifier + resolver chain for a ci-base -> modular merge
+# that stopped on conflicts (called by sync_modular_branch in --rebuild and by
+# merge_ci_base_into_modular on plain cron). Resolves and stages every
+# conflicted path (git add) but neither commits nor aborts: rc 0 = all paths
+# resolved and staged, rc 1 = at least one logical conflict (or a failed
+# write); the caller aborts. Fills MCR_COUNTS (per-classifier counts) and
+# MCR_RESOLVED_BY (path -> classifier name). Rule order is precedence.
+classify_and_resolve_modular_conflicts() {
+    local base_branch="$1" modular_branch="$2"
+    local logical_conflicts=() format_only=() resolve_side=() file f i
+
+    MCR_COUNTS=(
+        ["format-only"]=0 ["ci-base-subset"]=0 ["modular-subset"]=0
+        ["modular-owned"]=0 ["style-only-region"]=0 ["generated-file"]=0
+        ["upstream-provenance"]=0 ["import-only-region"]=0
+    )
+    MCR_RESOLVED_BY=()
+
+    while IFS= read -r file; do
+        case "$file" in
+            pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
+                logical_conflicts+=("$file") ;;
+            *)
+                if ci_base_generated_path "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("generated")
+                elif modular_owns_path "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("modular_owned")
+                elif conflict_is_format_only "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("theirs")
+                elif conflict_ci_base_is_subset "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("ours")
+                elif conflict_modular_is_subset "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("theirs_subset")
+                elif conflict_regions_style_only "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("style_regions")
+                elif conflict_modular_loss_is_upstream_provenance "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("upstream_provenance")
+                elif conflict_import_regions_ours "$file"; then
+                    format_only+=("$file")
+                    resolve_side+=("import_regions")
+                else
+                    logical_conflicts+=("$file")
+                fi ;;
+        esac
+    done < <(git diff --name-only --diff-filter=U)
+
+    if [ ${#logical_conflicts[@]} -gt 0 ]; then
+        log_error "Logical conflicts merging $base_branch into $modular_branch — manual resolution needed (auto-resolving these would discard $modular_branch content):"
+        for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+        return 1
+    fi
+
+    local name cur
+    for i in "${!format_only[@]}"; do
+        f="${format_only[$i]}"
+        if [ "${resolve_side[$i]}" = "generated" ]; then
+            git checkout --theirs -- "$f" && git add -- "$f"
+            log_detail "  generated $f: took ci-base's version (generated artifact, see ci_base_generated_path)"
+            name="generated-file"
+        elif [ "${resolve_side[$i]}" = "modular_owned" ]; then
+            git checkout --ours "$f" 2>/dev/null
+            log_detail "  modular-owned $f: kept modular's version (declared in modular_owned_paths)"
+            name="modular-owned"
+        elif [ "${resolve_side[$i]}" = "ours" ]; then
+            git checkout --ours "$f" 2>/dev/null
+            name="ci-base-subset"
+        elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
+            git checkout --theirs "$f" 2>/dev/null
+            name="modular-subset"
+        elif [ "${resolve_side[$i]}" = "upstream_provenance" ]; then
+            git checkout --theirs -- "$f"
+            log_detail "  upstream-provenance $f: took ci-base's version (every modular line it drops is merge-base or upstream text)"
+            name="upstream-provenance"
+        elif [ "${resolve_side[$i]}" = "style_regions" ]; then
+            # Whole-file checkout would discard the other side's
+            # non-conflicting content; only the regions take theirs.
+            resolve_conflict_regions_theirs "$f" || {
+                log_error "Failed to write style-only region resolution for $f"
+                return 1
+            }
+            log_detail "  style-only regions $f: took ci-base's text for the conflict regions, kept git's merge elsewhere"
+            name="style-only-region"
+        elif [ "${resolve_side[$i]}" = "import_regions" ]; then
+            resolve_conflict_regions_ours "$f" || {
+                log_error "Failed to write import-only region resolution for $f"
+                return 1
+            }
+            log_detail "  import-only regions $f: kept modular's import blocks, git's merge elsewhere (ruff: no new F821/F811)"
+            name="import-only-region"
+        else
+            git checkout --theirs "$f" 2>/dev/null
+            name="format-only"
+        fi
+        cur="${MCR_COUNTS[$name]}"
+        MCR_COUNTS[$name]=$((cur + 1))
+        MCR_RESOLVED_BY["$f"]="$name"
+        git add "$f"
+    done
+    return 0
+}
+
 sync_modular_branch() {
     local modular_branch="$1"
     local base_branch="$2"
@@ -2249,7 +2461,7 @@ sync_modular_branch() {
     MODULAR_CLASSIFIER_COUNTS=(
         ["format-only"]=0 ["ci-base-subset"]=0 ["modular-subset"]=0
         ["modular-owned"]=0 ["style-only-region"]=0 ["generated-file"]=0
-        ["upstream-provenance"]=0
+        ["upstream-provenance"]=0 ["import-only-region"]=0
     )
     # Placeholder until a merge outcome is known; left as-is on every failure path.
     printf 'modular-merge classifier total=0 (no conflict resolution completed)\n' \
@@ -2295,96 +2507,26 @@ sync_modular_branch() {
                 # ruff and compares them; ci-base-subset proves ci-base's changed
                 # lines are already covered by modular's changed lines relative to
                 # the merge base (see conflict_is_format_only / conflict_ci_base_is_subset).
-                local logical_conflicts=() format_only=() resolve_side=()
-                while IFS= read -r file; do
-                    case "$file" in
-                        pyproject.toml|.pre-commit-config.yaml|conftest.py|.github/*|test/conftest.py)
-                            logical_conflicts+=("$file") ;;
-                        *)
-                            if ci_base_generated_path "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("generated")
-                            elif modular_owns_path "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("modular_owned")
-                            elif conflict_is_format_only "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("theirs")
-                            elif conflict_ci_base_is_subset "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("ours")
-                            elif conflict_modular_is_subset "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("theirs_subset")
-                            elif conflict_regions_style_only "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("style_regions")
-                            elif conflict_modular_loss_is_upstream_provenance "$file"; then
-                                format_only+=("$file")
-                                resolve_side+=("upstream_provenance")
-                            else
-                                logical_conflicts+=("$file")
-                            fi ;;
-                    esac
-                done < <(git diff --name-only --diff-filter=U)
-
-                if [ ${#logical_conflicts[@]} -gt 0 ]; then
-                    log_error "Logical conflicts merging $base_branch into $modular_branch — manual resolution needed (auto-resolving these would discard $modular_branch content):"
-                    for f in "${logical_conflicts[@]}"; do log_detail "  $f"; done
+                # The chain lives in classify_and_resolve_modular_conflicts (shared
+                # with the plain-cron merge_ci_base_into_modular).
+                classify_and_resolve_modular_conflicts "$base_branch" "$modular_branch" || {
                     git merge --abort >& /dev/null
                     return 1
-                fi
-
-                local format_only_count=0 subset_count=0 modular_subset_count=0 owned_count=0 style_region_count=0 generated_count=0 upstream_provenance_count=0
-                for i in "${!format_only[@]}"; do
-                    f="${format_only[$i]}"
-                    if [ "${resolve_side[$i]}" = "generated" ]; then
-                        git checkout --theirs -- "$f" && git add -- "$f"
-                        log_detail "  generated $f: took ci-base's version (generated artifact, see ci_base_generated_path)"
-                        generated_count=$((generated_count + 1))
-                    elif [ "${resolve_side[$i]}" = "modular_owned" ]; then
-                        git checkout --ours "$f" 2>/dev/null
-                        log_detail "  modular-owned $f: kept modular's version (declared in modular_owned_paths)"
-                        owned_count=$((owned_count + 1))
-                    elif [ "${resolve_side[$i]}" = "ours" ]; then
-                        git checkout --ours "$f" 2>/dev/null
-                        subset_count=$((subset_count + 1))
-                    elif [ "${resolve_side[$i]}" = "theirs_subset" ]; then
-                        git checkout --theirs "$f" 2>/dev/null
-                        modular_subset_count=$((modular_subset_count + 1))
-                    elif [ "${resolve_side[$i]}" = "upstream_provenance" ]; then
-                        git checkout --theirs -- "$f"
-                        log_detail "  upstream-provenance $f: took ci-base's version (every modular line it drops is merge-base or upstream text)"
-                        upstream_provenance_count=$((upstream_provenance_count + 1))
-                    elif [ "${resolve_side[$i]}" = "style_regions" ]; then
-                        # Whole-file checkout would discard the other side's
-                        # non-conflicting content; only the regions take theirs.
-                        resolve_conflict_regions_theirs "$f" || {
-                            log_error "Failed to write style-only region resolution for $f"
-                            git merge --abort >& /dev/null
-                            return 1
-                        }
-                        log_detail "  style-only regions $f: took ci-base's text for the conflict regions, kept git's merge elsewhere"
-                        style_region_count=$((style_region_count + 1))
-                    else
-                        git checkout --theirs "$f" 2>/dev/null
-                        format_only_count=$((format_only_count + 1))
-                    fi
-                    git add "$f"
-                done
+                }
                 git commit --no-verify --no-edit >& /dev/null || {
                     log_error "Failed to commit auto-resolved conflicts for $base_branch merge"
                     git merge --abort >& /dev/null
                     return 1
                 }
-                log_operation "Merged $base_branch ($format_only_count format-only conflicts resolved, $subset_count ci-base-subset conflicts resolved (kept modular), $modular_subset_count modular-subset conflicts resolved (kept ci-base), $owned_count modular-owned conflicts resolved (kept modular), $style_region_count style-only-region conflicts resolved (took ci-base regions), $generated_count generated-file conflicts resolved (took ci-base), $upstream_provenance_count upstream-provenance conflicts resolved (took ci-base))"
-                MODULAR_CLASSIFIER_COUNTS["format-only"]=$format_only_count
-                MODULAR_CLASSIFIER_COUNTS["ci-base-subset"]=$subset_count
-                MODULAR_CLASSIFIER_COUNTS["modular-subset"]=$modular_subset_count
-                MODULAR_CLASSIFIER_COUNTS["modular-owned"]=$owned_count
-                MODULAR_CLASSIFIER_COUNTS["style-only-region"]=$style_region_count
-                MODULAR_CLASSIFIER_COUNTS["generated-file"]=$generated_count
-                MODULAR_CLASSIFIER_COUNTS["upstream-provenance"]=$upstream_provenance_count
+                log_operation "Merged $base_branch (${MCR_COUNTS[format-only]} format-only conflicts resolved, ${MCR_COUNTS[ci-base-subset]} ci-base-subset conflicts resolved (kept modular), ${MCR_COUNTS[modular-subset]} modular-subset conflicts resolved (kept ci-base), ${MCR_COUNTS[modular-owned]} modular-owned conflicts resolved (kept modular), ${MCR_COUNTS[style-only-region]} style-only-region conflicts resolved (took ci-base regions), ${MCR_COUNTS[generated-file]} generated-file conflicts resolved (took ci-base), ${MCR_COUNTS[upstream-provenance]} upstream-provenance conflicts resolved (took ci-base), ${MCR_COUNTS[import-only-region]} import-only-region conflicts resolved (kept modular regions))"
+                MODULAR_CLASSIFIER_COUNTS["format-only"]=${MCR_COUNTS[format-only]}
+                MODULAR_CLASSIFIER_COUNTS["ci-base-subset"]=${MCR_COUNTS[ci-base-subset]}
+                MODULAR_CLASSIFIER_COUNTS["modular-subset"]=${MCR_COUNTS[modular-subset]}
+                MODULAR_CLASSIFIER_COUNTS["modular-owned"]=${MCR_COUNTS[modular-owned]}
+                MODULAR_CLASSIFIER_COUNTS["style-only-region"]=${MCR_COUNTS[style-only-region]}
+                MODULAR_CLASSIFIER_COUNTS["generated-file"]=${MCR_COUNTS[generated-file]}
+                MODULAR_CLASSIFIER_COUNTS["upstream-provenance"]=${MCR_COUNTS[upstream-provenance]}
+                MODULAR_CLASSIFIER_COUNTS["import-only-region"]=${MCR_COUNTS[import-only-region]}
                 record_modular_classifier_counts
             fi
         fi
@@ -2857,7 +2999,10 @@ merge_modular_into_feature_branch() {
 # --rebuild-only. Assumes modular is checked out. Deliberately NOT skipped
 # under REBUILD_MODE: sync_modular_branch already merged ci-base, so the
 # ancestor check makes this a no-op there.
-# Conflict: abort, record in FAILED_MERGES, return 1; modular stays put.
+# Conflict: the same classifier chain as sync_modular_branch runs first
+# (classify_and_resolve_modular_conflicts); if it resolves every path the
+# merge is committed. Otherwise abort, record in FAILED_MERGES, return 1;
+# modular stays put.
 ###############################################################################
 merge_ci_base_into_modular() {
     if git merge-base --is-ancestor origin/ci-base modular >/dev/null 2>&1; then
@@ -2874,6 +3019,17 @@ merge_ci_base_into_modular() {
 
     local _conflicted _total _shown _detail
     _conflicted="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+    if [ -n "$_conflicted" ] && git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
+            && classify_and_resolve_modular_conflicts origin/ci-base modular \
+            && git -c commit.gpgsign=false commit --no-verify \
+                -m "Merge ci-base into modular (cron incremental)" >> "$_cibase_log" 2>&1; then
+        local _path
+        for _path in "${!MCR_RESOLVED_BY[@]}"; do
+            log_operation "  $_path: resolved by ${MCR_RESOLVED_BY[$_path]} classifier"
+        done
+        log_operation "Merged origin/ci-base into modular with classifier-resolved conflicts ($(git rev-parse --short HEAD))"
+        return 0
+    fi
     git merge --abort >& /dev/null
     _total=$(printf '%s\n' "$_conflicted" | grep -c .)
     _shown="$(printf '%s\n' "$_conflicted" | grep . | head -n 10 | paste -sd, - | sed 's/,/, /g')"

@@ -30,7 +30,8 @@ log_detail() { :; }
 for fn in ci_base_generated_path read_modular_owned_paths modular_owns_path \
           conflict_is_format_only py_pair_format_equivalent conflict_gitignore_pattern_subset \
           conflict_side_is_subset conflict_ci_base_is_subset conflict_modular_is_subset \
-          conflict_regions_variant conflict_regions_style_only; do
+          conflict_regions_variant conflict_regions_style_only \
+          conflict_regions_import_only _modular_f_diagnostics conflict_import_regions_ours; do
     # shellcheck disable=SC1090
     source <(sed -n "/^${fn}() {/,/^}/p" "$SCRIPT")
 done
@@ -41,7 +42,7 @@ cd "$WT" || exit 2
 # Conflicts are expected; fail-open.
 git merge --no-commit --no-ff "$THEIRS_REF" >/dev/null 2>&1 || true
 
-n_generated=0; n_owned=0; n_fmt=0; n_subset=0; n_msubset=0; n_regions=0; n_logical=0
+n_generated=0; n_owned=0; n_fmt=0; n_subset=0; n_msubset=0; n_regions=0; n_imports=0; n_logical=0
 logical_files=()
 while IFS= read -r file; do
     [ -z "$file" ] && continue
@@ -61,6 +62,8 @@ while IFS= read -r file; do
                 v="modular-subset(theirs)"; n_msubset=$((n_msubset + 1))
             elif conflict_regions_style_only "$file"; then
                 v="style-regions(theirs)"; n_regions=$((n_regions + 1))
+            elif conflict_import_regions_ours "$file"; then
+                v="import-only-regions(ours)"; n_imports=$((n_imports + 1))
             else
                 v="LOGICAL"; n_logical=$((n_logical + 1))
             fi ;;
@@ -69,7 +72,7 @@ while IFS= read -r file; do
     [ "$v" = "LOGICAL" ] && logical_files+=("$file")
 done < <(git diff --name-only --diff-filter=U)
 
-echo "SUMMARY generated=$n_generated modular-owned=$n_owned format-only=$n_fmt ci-base-subset=$n_subset modular-subset=$n_msubset style-regions=$n_regions LOGICAL=$n_logical"
+echo "SUMMARY generated=$n_generated modular-owned=$n_owned format-only=$n_fmt ci-base-subset=$n_subset modular-subset=$n_msubset style-regions=$n_regions import-only-regions=$n_imports LOGICAL=$n_logical"
 for f in "${logical_files[@]}"; do echo "LOGICAL $f"; done
 git merge --abort >/dev/null 2>&1 || true
 [ "$n_logical" -eq 0 ]
