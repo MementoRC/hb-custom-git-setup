@@ -600,9 +600,18 @@ target_branches:
       - name: _for_bleed/importlinter-l1-layer
         enabled: true
         base: modular
-        parent: _for_bleed/importlinter-drop-stale-async-logger-ignore
+        parent: _for_bleed/wire-order-book
         tier: infrastructure
         description: "import-linter layers contract: L1 row (web_assistant) + interim strategy_framework.primitives row (drop after hb-data-type-primitives#43 / hb-strategy-framework#73); lint-boundaries 18/18 KEPT"
+        permanent: false
+        disable_when_in_development: true
+
+      - name: _for_bleed/importlinter-drop-sf-primitives
+        enabled: true
+        base: modular
+        parent: _for_bleed/importlinter-l1-layer
+        tier: infrastructure
+        description: "Drop the obsolete strategy_framework.primitives row from .importlinter after hb-strategy-framework v0.3.0 / hb-data-type-primitives v0.7.0; lint-boundaries 19/19 KEPT on scratch integration"
         permanent: false
         disable_when_in_development: true
 
