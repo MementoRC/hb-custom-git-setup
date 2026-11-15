@@ -642,14 +642,6 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_bleed/security-foxbit-eval-and-pickle
-        enabled: true
-        base: ci-base
-        tier: feature
-        description: "Security: foxbit eval() on WebSocket data (3 sites) and pickle.loads() on remote HTTP body removal"
-        permanent: false
-        disable_when_in_development: true
-
       # _for_bleed/expand-subpackage-compat-check: PROMOTED to ci-base (2026-06-11)
       # ci/check_subpackage_compat.py and install-subpackages (all 14) now owned by ci-base.
 
