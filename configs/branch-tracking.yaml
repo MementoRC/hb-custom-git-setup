@@ -374,6 +374,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/network-mock-timeout
+        enabled: true
+        tier: infrastructure
+        base: development
+        description: "NetworkMockingAssistant run_until_all_*_delivered default timeout 1s -> 5s; gemini test_listen_for_subscriptions_subscribes timed out under full-suite load (bleeding-edge gate failed cron 20261116 + 20261117). Class T: upstream PR candidate; retire when development has it."
+        permanent: false
+        disable_when_in_development: true
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
