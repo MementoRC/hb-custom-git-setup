@@ -18,6 +18,10 @@ Infrastructure scripts for managing hummingbot's bleeding-edge and accelerated b
 | `hummingbot-rebase-check.sh` | Git rebase verification |
 | `common.sh` | Shared logging and utility functions |
 
+### Connector secrets helper
+
+`scripts/connector_env_exec.py` prompts (TTY only) for the Hummingbot password, decrypts only the requested secret fields of one connector config, and execs one command with them in its environment (nothing printed or written). Invoke via pixi only, e.g. `pixi run connector-exec kraken -- kraken ... --validate`; add `--dry-run` to list the env var names without exec, `--map ENV_VAR=config_field` for other connectors, `--conf-dir DIR` to override the conf path. Tests: `pixi run connector-exec-test`.
+
 ## Configuration
 
 Branch tracking is configured in `configs/branch-tracking.yaml`.

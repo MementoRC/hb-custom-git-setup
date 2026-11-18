@@ -27,6 +27,18 @@ description = "Run hummingbot-cron-wrapper.sh detached in its own systemd user u
 cmd = "bash scripts/cron-now.sh --rebuild"
 description = "Like cron-now, but passes --rebuild to the wrapper"
 
+[tasks.connector-exec]
+cmd = "/home/memento/PycharmProjects/Hummingbot/hummingbot/.pixi/envs/default/bin/python -I -B scripts/connector_env_exec.py"
+description = "Prompt for the Hummingbot password, decrypt one connector's secrets, exec a command with them in env: connector-exec kraken -- <cmd> [args]"
+
+[tasks.connector-exec-test]
+cmd = "/home/memento/PycharmProjects/Hummingbot/hummingbot/.pixi/envs/default/bin/python -I -B -m pytest -p no:cacheprovider scripts/tests/test_connector_env_exec.py"
+description = "Run connector_env_exec unit tests with the hummingbot env interpreter"
+
+[tasks.connector-exec-lint]
+cmd = "/home/memento/PycharmProjects/Hummingbot/hummingbot/.pixi/envs/default/bin/python -I -B -m ruff check --no-cache --isolated --select S scripts/connector_env_exec.py"
+description = "ruff flake8-bandit (S) check of connector_env_exec.py"
+
 [feature.cockpit.dependencies]
 python = "3.12.*"
 streamlit = "*"
