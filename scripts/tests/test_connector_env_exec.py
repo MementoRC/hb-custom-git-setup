@@ -39,6 +39,11 @@ def conf_dir(tmp_path, monkeypatch):
     return conf
 
 
+@pytest.fixture(autouse=True)
+def fake_which(tool, monkeypatch):
+    monkeypatch.setattr(tool.shutil, "which", lambda name, path=None: f"/fake/bin/{name}")
+
+
 @pytest.fixture
 def tty(tool, monkeypatch):
     monkeypatch.setattr(tool, "_have_tty", lambda: True)
@@ -91,7 +96,7 @@ def test_exec_env_has_secrets_argv_does_not(tool, tty, conf_dir, monkeypatch, ca
     cmd = ("kraken", "order", "--validate")
     assert tool.run(_argv(conf_dir, cmd=cmd)) == 0
     (file, argv, env), = calls
-    assert file == "kraken" and argv == list(cmd)
+    assert file == "/fake/bin/kraken" and argv == list(cmd)
     assert env["KRAKEN_API_KEY"] == API_KEY
     assert env["KRAKEN_API_SECRET"] == API_SECRET
     assert not any(API_KEY in a or API_SECRET in a for a in argv)
@@ -157,8 +162,46 @@ def test_exec_oserror_generic(tool, tty, conf_dir, monkeypatch, capsys):
     monkeypatch.setattr(tool.os, "execvpe", boom)
     assert tool.run(_argv(conf_dir)) == 126
     captured = capsys.readouterr()
-    assert "could not exec command" in captured.err
+    assert "could not exec /fake/bin/echo: OSError: None" in captured.err
     _no_leak(captured)
+
+
+def test_exec_permission_error_reports_type_and_strerror(tool, tty, conf_dir, monkeypatch, capsys):
+    monkeypatch.setattr(tool.getpass, "getpass", lambda prompt="": PASSWORD)
+
+    def boom(file, argv, env):
+        raise PermissionError(13, "Permission denied", API_KEY)
+
+    monkeypatch.setattr(tool.os, "execvpe", boom)
+    assert tool.run(_argv(conf_dir)) == 126
+    captured = capsys.readouterr()
+    assert "PermissionError" in captured.err and "Permission denied" in captured.err
+    assert "/fake/bin/echo" in captured.err
+    _no_leak(captured)
+
+
+def test_command_not_found_exits_127_before_prompt(tool, tty, conf_dir, monkeypatch, capsys):
+    monkeypatch.setattr(tool.shutil, "which", lambda name, path=None: None)
+    monkeypatch.setattr(tool.getpass, "getpass", lambda prompt="": pytest.fail("must not prompt"))
+    monkeypatch.setattr(tool.os, "execvpe", lambda *a: pytest.fail("must not exec"))
+    assert tool.run(_argv(conf_dir, cmd=("kraken", "x"))) == 127
+    assert "error: kraken: not found on PATH" in capsys.readouterr().err
+
+
+def test_exec_receives_resolved_path_argv0_unchanged(tool, tty, conf_dir, monkeypatch, capsys):
+    monkeypatch.setattr(tool.getpass, "getpass", lambda prompt="": PASSWORD)
+    calls = []
+    monkeypatch.setattr(tool.os, "execvpe", lambda file, argv, env: calls.append((file, argv)))
+    assert tool.run(_argv(conf_dir, cmd=("kraken", "order"))) == 0
+    assert calls == [("/fake/bin/kraken", ["kraken", "order"])]
+    captured = capsys.readouterr()
+    assert "exec: /fake/bin/kraken (env vars set: KRAKEN_API_KEY, KRAKEN_API_SECRET)" in captured.err
+
+
+def test_dry_run_shows_resolved_path(tool, tty, conf_dir, monkeypatch, capsys):
+    monkeypatch.setattr(tool.getpass, "getpass", lambda prompt="": PASSWORD)
+    assert tool.run(_argv(conf_dir, "--dry-run", cmd=("kraken",))) == 0
+    assert "would exec: /fake/bin/kraken" in capsys.readouterr().out
 
 
 def test_no_tty_refused(tool, conf_dir, monkeypatch, capsys):

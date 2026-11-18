@@ -9,6 +9,7 @@ import argparse
 import getpass
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -133,6 +134,12 @@ def run(argv: list[str]) -> int:
     try:
         args, cmd = parse_args(argv)
         mapping = build_mapping(args.connector, args.map)
+        # PATH cannot be remapped (denied name), so the child's PATH is os.environ's PATH.
+        resolved = shutil.which(cmd[0], path=os.environ.get("PATH"))
+        if resolved is None:
+            print(f"error: {cmd[0]}: not found on PATH", file=sys.stderr)
+            return 127
+        resolved = os.path.abspath(resolved)
         if not _have_tty():
             print("error: no TTY available; refusing to read the password", file=sys.stderr)
             return 2
@@ -149,15 +156,15 @@ def run(argv: list[str]) -> int:
 
     names = ", ".join(sorted(values))
     if args.dry_run:
-        print(f"dry-run: would set env vars: {names}; would exec: {cmd[0]}")
+        print(f"dry-run: would set env vars: {names}; would exec: {resolved}")
         return 0
-    print(f"exec: {cmd[0]} (env vars set: {names})", file=sys.stderr)
+    print(f"exec: {resolved} (env vars set: {names})", file=sys.stderr)
     env = {**os.environ, **values}
     try:
-        os.execvpe(cmd[0], cmd, env)
-    except OSError:
-        print("error: could not exec command", file=sys.stderr)
-        return 126
+        os.execvpe(resolved, cmd, env)
+    except OSError as e:
+        print(f"error: could not exec {resolved}: {type(e).__name__}: {e.strerror}", file=sys.stderr)
+        return 127 if isinstance(e, FileNotFoundError) else 126
     return 0  # only reached when execvpe is mocked
 
 
