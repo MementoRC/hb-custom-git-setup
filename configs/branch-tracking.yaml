@@ -612,6 +612,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/kraken-mc-adapter
+        enabled: true
+        base: modular
+        tier: feature
+        description: "hummingbot#85 parent Kraken ConnectorBase adapter over hb-market-connector KrakenConnectorCore (P1 read surface + P2 order path)"
+        permanent: false
+        disable_when_in_development: true
+
   bleeding-edge:
     # _for_bleed/* branches: feature/infrastructure work merged into bleeding-edge
     # Listed below in tier order (infrastructure first, feature second).
