@@ -430,6 +430,12 @@ run_py312_transforms_for_changed() {
         return 0
     fi
 
+    # Never transform top-level setup.py: upstream hand-bumps its version and the gates don't lint it;
+    # reformatting makes every bump conflict with the _for_ci-owned setup.py (cron 20261119/20261120).
+    local -a _tf=(); local _f
+    for _f in "$@"; do [ "$_f" = setup.py ] || [ "$_f" = ./setup.py ] || _tf+=("$_f"); done
+    set -- "${_tf[@]+"${_tf[@]}"}"
+
     if [ $# -eq 0 ]; then
         log_operation "py312 post-merge transform: no changed Python files"
         return 0

@@ -94,4 +94,51 @@ else
     fail "Py312-Tooling trailer got '$out' want '$want'"
 fi
 
+# 6. run_py312_transforms_for_changed drops top-level setup.py, keeps other .py files.
+# The function embeds heredocs with column-0 `}`, so grow the sed range until it parses.
+fn_src=""
+while IFS= read -r line; do
+    fn_src+="$line"$'\n'
+    if [ "$line" = "}" ] && bash -n <<<"$fn_src" 2>/dev/null; then break; fi
+done < <(sed -n "/^run_py312_transforms_for_changed() {/,\$p" "$SCRIPT")
+eval "$fn_src"
+if ! declare -F run_py312_transforms_for_changed >/dev/null; then
+    echo "FAIL could not load run_py312_transforms_for_changed from $SCRIPT"
+    exit 1
+fi
+
+log_operation() { :; }
+log_warning() { :; }
+log_error() { :; }
+log_section() { :; }
+log_result() { :; }
+py312_tooling_trailer() { echo "Py312-Tooling: test"; }
+
+BIN="$TMPDIR_T/bin"
+mkdir -p "$BIN"
+SEEN="$TMPDIR_T/refactor_args"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$SEEN" > "$BIN/refactor-py312"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ruff"
+chmod +x "$BIN/refactor-py312" "$BIN/ruff"
+
+REPO_PATH="$TMPDIR_T/no-such-repo"
+PATH="$BIN:$PATH"
+printf 'version = "1"\n' > setup.py
+printf 'k = 1\n' > hummingbot/keep.py
+run_py312_transforms_for_changed setup.py ./setup.py hummingbot/keep.py >/dev/null 2>&1
+got="$(grep -v -e '^--workers$' -e '^1$' "$SEEN" 2>/dev/null)"
+if [ "$got" = "hummingbot/keep.py" ]; then
+    pass "py312 transform drops setup.py, keeps other .py files"
+else
+    fail "py312 transform file list got '$got'"
+fi
+
+rm -f "$SEEN"
+run_py312_transforms_for_changed setup.py >/dev/null 2>&1
+if [ ! -e "$SEEN" ]; then
+    pass "py312 transform with only setup.py is a no-op"
+else
+    fail "py312 transform ran on setup.py alone"
+fi
+
 [ "$fails" -eq 0 ]
