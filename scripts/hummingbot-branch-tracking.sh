@@ -423,6 +423,13 @@ assert_clean_working_tree() {
 # Toggleable via PY312_TRANSFORMS=0 to bypass during incident triage.
 # Called with the list of changed .py files as positional arguments.
 ###############################################################################
+gate_changed_files() {
+    # Files differing from origin/development that the pre-push gate may run pre-commit on.
+    # Excludes sub-packages/, pixi.lock and top-level setup.py (must stay equal to upstream).
+    ( cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" ) \
+        | grep -v -e '^sub-packages/' -e '^pixi\.lock$' -e '^setup\.py$' -e '^\./setup\.py$' || true
+}
+
 run_py312_transforms_for_changed() {
     # $@ — list of .py files relative to REPO_PATH
     if [ "${PY312_TRANSFORMS:-1}" = "0" ]; then
@@ -4657,7 +4664,7 @@ gate_and_push_branch() {
       _q_ok=true
       _quality_log="$RUN_LOG_DIR/gate_quality_${_gate_branch}.log"
       : > "$_quality_log"
-      _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+      _changed=$(gate_changed_files)
       if [ -n "$_changed" ]; then
           if ! ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1; then
               # The lint/format autofix step is SKIPPED for the overlay tier: that tier
@@ -4676,7 +4683,7 @@ gate_and_push_branch() {
                           --no-gpg-sign --no-verify ) >> "$_quality_log" 2>&1
                   fi
               fi
-              _changed=$(cd "$REPO_PATH" && git diff --name-only "origin/$DEVELOPMENT_BRANCH" | grep -v '^sub-packages/' | grep -v '^pixi\.lock$' || true)
+              _changed=$(gate_changed_files)
               if [ -n "$_changed" ]; then
                   ( cd "$REPO_PATH" && "$_pixi_cmd" run --frozen -e ci pre-commit run --files $_changed ) >> "$_quality_log" 2>&1 || _q_ok=false
               fi
