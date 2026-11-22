@@ -79,6 +79,20 @@ target_branches:
 
       # _for_ci/add-typer-dep: RETIRED 2026-09-15 — real delta (pyproject.toml +1, `typer = ">=0.9.0"`) folded into ci-base seed v5 (3272d52a). Had absorbed all 22 seed files and aborted a rebuild with 8 logical conflicts. The seed owns pyproject.toml, so a dependency-adding _for_ci branch is Class P — fold, never re-derive.
 
+      - name: _for_ci/precommit-exclude-setup-py
+        enabled: true
+        tier: infrastructure
+        description: "Exclude setup.py from the pre-commit ruff and ruff-format hooks (one-line regex change in both excludes). setup.py is intentionally kept at upstream development's text (be8a79ddfa); the pre-push gate already excludes it (custom_git_setup 87bf6d61), but the PR Quality-gates job runs pre-commit on the diff, reformatted setup.py and failed #69. Based on ci-base-seed-v5 (not development): ruff block is seed content; user decision 2026-11-21. Commit e245bcfd. Added 2026-11-21."
+        permanent: false
+        disable_when_in_development: false
+
+      - name: _for_ci/runner-no-shell-chown
+        enabled: true
+        tier: infrastructure
+        description: "Class T upstream-lag: hummingbot/client/runner.py autofix_permissions runs chown with an argument list and cwd instead of shell=True (bandit B602 HIGH, shell injection via user_group_spec) plus its test update. Same commit as upstream/runner-no-shell-chown (598c1b5d); retire when upstream merges. Added 2026-11-21."
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_ci/lint-residual
         enabled: true
         tier: infrastructure
