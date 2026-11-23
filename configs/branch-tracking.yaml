@@ -396,6 +396,14 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_ci/gate-io-last-traded-timeout
+        enabled: true
+        tier: infrastructure
+        base: development
+        description: "Test-only: 5s timeout for gate_io test_get_last_traded_prices; it timed out twice in the bleeding-edge gate under load (2026-11-22/23)"
+        permanent: false
+        disable_when_in_development: true
+
   modular:
     # Passthrough layer between ci-base and bleeding-edge.
     # During each rebuild the script fast-forwards modular to the ci-base tip, then pushes.
