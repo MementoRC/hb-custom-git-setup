@@ -229,6 +229,22 @@ else
     fail "stale tree rc=$rc live=$live want=$C1 commits=$before->$(commits)"
 fi
 
+# 7b. Tracked tip differs and is not CI-green, working tree on a third commit
+# (previous tier): pin kept, tree re-synced to the recorded pin, no commit.
+new_fixture main
+advance_origin
+gh_set "completed failure" "pending 0"
+command git -C sub-packages/foo commit -q --allow-empty -m third
+before=$(commits)
+run_bump
+live="$(command git -C sub-packages/foo rev-parse HEAD)"
+if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C1" ] && [ "$(commits)" -eq "$before" ] \
+    && [ "$live" = "$C1" ]; then
+    pass "not-green keep-pin re-syncs stale tree to kept pin (rc=$rc)"
+else
+    fail "not-green keep-pin resync rc=$rc gitlink=$(gitlink) live=$live want=$C1 commits=$before->$(commits)"
+fi
+
 # 8. require_ci disabled: red CI is ignored and gh is not called.
 new_fixture main "subpackage_tracking_require_ci: false"
 advance_origin

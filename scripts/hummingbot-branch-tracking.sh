@@ -3134,12 +3134,27 @@ bump_tracked_subpackages() {
             local ci_reason
             if ! ci_reason="$(subpackage_ci_green "$sub" "$target")"; then
                 log_warning "auto-track: $name ${target:0:7} not CI-green ($ci_reason) — keeping pin ${recorded:0:7}"
+                # Keeping the pin must also keep the working TREE on it: the
+                # shared submodule tree may have been left at another SHA by a
+                # previous tier, and the gate would then test that code.
+                local kept_live
+                kept_live="$(git -C "$sub" rev-parse HEAD 2>/dev/null || echo "")"
+                if [ "$kept_live" != "$recorded" ]; then
+                    if git submodule update --init --force -- "$sub" >& /dev/null; then
+                        log_operation "auto-track: $name working tree re-synced to kept pin (${recorded:0:7})"
+                    else
+                        log_warning "auto-track: working-tree re-sync FAILED for $name (kept pin ${recorded:0:7}, tree ${kept_live:0:7})"
+                    fi
+                fi
                 continue
             fi
         fi
 
         if ! git -C "$sub" checkout --quiet --detach "$target"; then
             log_warning "auto-track: checkout $target failed for $name"
+            if ! git submodule update --init --force -- "$sub" >& /dev/null; then
+                log_warning "auto-track: working-tree re-sync FAILED for $name after checkout failure (recorded ${recorded:0:7})"
+            fi
             continue
         fi
 
