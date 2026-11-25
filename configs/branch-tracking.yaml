@@ -100,10 +100,10 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
-      - name: _for_ci/pytest-asyncio-test-fixes
+      - name: _for_ci/pytest-asyncio-test-fixes-rederived
         enabled: true
         tier: infrastructure
-        description: "3 test-file deltas: MQTT gateway teardown, skip 5 network tests, cross-exchange-mm event-loop drain (Group F triaged vs #66)"
+        description: "Re-derived 2026-11-25 onto development dd5066f1: skip 5 network tests, cross-exchange-mm event-loop drain, ruff style (test_rate/test_status). Dropped the obsolete commlib-era MQTT gateway teardown (71c0fa5bdd) that blocked the ci-base incremental merge of test_mqtt.py."
         permanent: false
         disable_when_in_development: true
 
