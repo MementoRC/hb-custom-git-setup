@@ -15,7 +15,8 @@ log_section() { echo "$*"; }
 log_result() { echo "$*"; }
 
 # shellcheck disable=SC1090
-for fn in read_subpackage_tracking subpackage_ci_green bump_tracked_subpackages; do
+for fn in read_subpackage_tracking subpackage_required_checks subpackage_warn_no_required \
+    subpackage_required_green subpackage_ci_green bump_tracked_subpackages; do
     source <(sed -n "/^${fn}() {/,/^}/p" "$SCRIPT")
     if ! declare -F "$fn" >/dev/null; then
         echo "FAIL could not load $fn from $SCRIPT"
@@ -71,6 +72,10 @@ cat > "$TMPDIR_T/bin/gh" <<'EOF'
 echo "$*" >> "$GH_LOG"
 case "$*" in
     *check-runs*) [ "${GH_FAIL:-}" = "check-runs" ] && exit 1; printf '%s\n' "${GH_RUNS:-}" ;;
+    *protection/required_status_checks*)
+        [ -z "${GH_PROT+x}" ] && exit 1; printf '%s\n' "$GH_PROT" ;;
+    *rules/branches*) [ -z "${GH_RULES+x}" ] && exit 1; printf '%s\n' "$GH_RULES" ;;
+    *statuses*) [ "${GH_FAIL:-}" = "status" ] && exit 1; printf '%s\n' "${GH_STATUSES:-}" ;;
     *) [ "${GH_FAIL:-}" = "status" ] && exit 1; printf '%s\n' "${GH_STATUS:-}" ;;
 esac
 EOF
@@ -79,7 +84,20 @@ export PATH="$TMPDIR_T/bin:$PATH"
 export GH_LOG="$TMPDIR_T/gh.log"
 
 # gh_set <check-runs lines> <status line> [fail-endpoint]
-gh_set() { export GH_RUNS="$1" GH_STATUS="$2" GH_FAIL="${3:-}"; : > "$GH_LOG"; }
+# Check-run lines are the post-jq "id|status|conclusion|name". By default no
+# required-check source is readable (protection 404, rulesets error), so the
+# count-all fallback applies; gh_required opts in to a required list.
+gh_set() {
+    export GH_RUNS="$1" GH_STATUS="$2" GH_FAIL="${3:-}" GH_STATUSES=""
+    unset GH_PROT GH_RULES
+    : > "$GH_LOG"
+}
+# gh_required <protection contexts|-> [ruleset contexts] [legacy statuses]
+gh_required() {
+    if [ "$1" = "-" ]; then unset GH_PROT; else export GH_PROT="$1"; fi
+    if [ -n "${2:-}" ]; then export GH_RULES="$2"; fi
+    export GH_STATUSES="${3:-}"
+}
 
 # new_fixture <tracked-branch> [extra config line]: parent repo with sub-packages/foo
 # pinned at C1 on origin main. Leaves cwd in the parent, BRANCH_CONFIG set.
@@ -124,7 +142,7 @@ expect_no_bump() {
 # 1. CI green at the new tip: gitlink bumped, one commit, working tree moved.
 new_fixture main
 advance_origin
-gh_set "completed success" "pending 0"
+gh_set "1|completed|success|build" "pending 0"
 before=$(commits)
 run_bump
 subj="$(git log -1 --format=%s)"
@@ -140,7 +158,7 @@ fi
 # 2. Commit scope argument is honoured.
 new_fixture main
 advance_origin
-gh_set "completed success" "success 2"
+gh_set "1|completed|success|build" "success 2"
 bump_tracked_subpackages overlay >/dev/null 2>&1
 subj="$(git log -1 --format=%s)"
 if [[ "$subj" == "chore(overlay): auto-track"* ]] && [ "$(gitlink)" = "$C2" ]; then
@@ -159,20 +177,20 @@ red_case() {
     run_bump
     expect_no_bump "$label" "$before"
 }
-red_case "failed check-run blocks bump" "completed success
-completed failure" "pending 0"
-red_case "in-progress check-run blocks bump" "in_progress none" "pending 0"
-red_case "cancelled check-run blocks bump" "completed cancelled" "pending 0"
-red_case "failing commit status blocks bump" "completed success" "failure 1"
-red_case "pending commit status blocks bump" "completed success" "pending 1"
+red_case "failed check-run blocks bump" "1|completed|success|build
+2|completed|failure|lint" "pending 0"
+red_case "in-progress check-run blocks bump" "1|in_progress|none|build" "pending 0"
+red_case "cancelled check-run blocks bump" "1|completed|cancelled|build" "pending 0"
+red_case "failing commit status blocks bump" "1|completed|success|build" "failure 1"
+red_case "pending commit status blocks bump" "1|completed|success|build" "pending 1"
 red_case "no checks at all blocks bump" "" "pending 0"
 
 # 4. skipped/neutral conclusions count as green.
 new_fixture main
 advance_origin
-gh_set "completed skipped
-completed neutral
-completed success" "pending 0"
+gh_set "1|completed|skipped|a
+2|completed|neutral|b
+3|completed|success|c" "pending 0"
 run_bump
 if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C2" ]; then
     pass "skipped/neutral/success check-runs are green"
@@ -183,11 +201,11 @@ fi
 # 5. gh failure or unparseable output fails closed.
 new_fixture main
 advance_origin
-gh_set "completed success" "success 1" check-runs
+gh_set "1|completed|success|build" "success 1" check-runs
 before=$(commits); run_bump
 expect_no_bump "check-runs API error fails closed" "$before"
 
-gh_set "completed success" "success 1" status
+gh_set "1|completed|success|build" "success 1" status
 before=$(commits); run_bump
 expect_no_bump "commit status API error fails closed" "$before"
 
@@ -196,7 +214,7 @@ before=$(commits); run_bump
 expect_no_bump "unparseable check-runs output fails closed" "$before"
 
 FAKE_URL="foo.git"  # no owner/repo shape -> slug underivable
-gh_set "completed success" "success 1"
+gh_set "1|completed|success|build" "success 1"
 before=$(commits); run_bump
 if [ ! -s "$GH_LOG" ]; then
     expect_no_bump "non-GitHub origin URL fails closed without calling gh" "$before"
@@ -207,7 +225,7 @@ FAKE_URL="https://github.com/acme/foo.git"
 
 # 6. Already at tip: no-op, no empty commit, gh never consulted.
 new_fixture main
-gh_set "completed failure" "failure 1"
+gh_set "1|completed|failure|build" "failure 1"
 before=$(commits)
 run_bump
 if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C1" ] && [ "$(commits)" -eq "$before" ] \
@@ -233,7 +251,7 @@ fi
 # (previous tier): pin kept, tree re-synced to the recorded pin, no commit.
 new_fixture main
 advance_origin
-gh_set "completed failure" "pending 0"
+gh_set "1|completed|failure|build" "pending 0"
 command git -C sub-packages/foo commit -q --allow-empty -m third
 before=$(commits)
 run_bump
@@ -248,7 +266,7 @@ fi
 # 8. require_ci disabled: red CI is ignored and gh is not called.
 new_fixture main "subpackage_tracking_require_ci: false"
 advance_origin
-gh_set "completed failure" "failure 1"
+gh_set "1|completed|failure|build" "failure 1"
 run_bump
 if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C2" ] && [ ! -s "$GH_LOG" ]; then
     pass "require_ci=false bumps without consulting gh"
@@ -259,7 +277,7 @@ fi
 # 9. Tracked branch missing on origin: fetch fails, pin kept.
 new_fixture nosuchbranch
 advance_origin
-gh_set "completed success" "success 1"
+gh_set "1|completed|success|build" "success 1"
 before=$(commits); run_bump
 expect_no_bump "missing remote branch keeps pin" "$before"
 
@@ -288,7 +306,7 @@ fi
 # 12. Persistent index.lock: staging fails, pin is NOT bumped, summary warns, no commit.
 new_fixture main
 advance_origin
-gh_set "completed success" "success 1"
+gh_set "1|completed|success|build" "success 1"
 before=$(commits)
 touch "$(git rev-parse --git-dir)/index.lock"
 run_bump
@@ -301,5 +319,74 @@ if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C1" ] && [ "$(commits)" -eq "$before" ]
 else
     fail "index.lock case rc=$rc gitlink=$(gitlink) want=$C1 commits=$before->$(commits) out='$out'"
 fi
+
+# 13. Required-check gating.
+# req_case <label> <want: bump|keep> <runs> <prot> <rules> <statuses> [grep-pattern]
+req_case() {
+    local label="$1" want="$2" runs="$3" prot="$4" rules="$5" sts="$6" pat="${7:-}" before ok=false
+    new_fixture main
+    advance_origin
+    gh_set "$runs" "pending 0"
+    gh_required "$prot" "$rules" "$sts"
+    before=$(commits)
+    run_bump
+    if [ "$want" = bump ]; then
+        [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C2" ] && ok=true
+    else
+        [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C1" ] && [ "$(commits)" -eq "$before" ] && ok=true
+    fi
+    if [ "$ok" = true ] && { [ -z "$pat" ] || printf '%s' "$out" | grep -qF -- "$pat"; }; then
+        pass "$label (rc=$rc)"
+    else
+        fail "$label rc=$rc gitlink=$(gitlink) C1=$C1 C2=$C2 out='$out'"
+    fi
+}
+
+req_case "required green plus optional red check bumps" bump \
+    "1|completed|success|CI Success
+2|completed|failure|optional-lint" "CI Success" "" ""
+req_case "required CI Success absent keeps pin" keep \
+    "1|completed|success|build
+2|completed|success|lint" "CI Success" "" "" "missing required: CI Success"
+req_case "required pending keeps pin" keep \
+    "1|in_progress|none|CI Success
+2|completed|success|build" "CI Success" "" "" "pending: CI Success"
+req_case "required failed keeps pin" keep \
+    "1|completed|failure|CI Success" "CI Success" "" "" "failure: CI Success"
+req_case "protection 404, ruleset provides required list" bump \
+    "1|completed|success|CI Success
+2|completed|failure|optional-lint" "-" "CI Success" ""
+req_case "ruleset required missing keeps pin" keep \
+    "1|completed|success|build" "-" "CI Success" "" "missing required: CI Success"
+req_case "duplicate-name cancelled older run plus newer success bumps" bump \
+    "7|completed|cancelled|CI Success
+9|completed|success|CI Success
+8|completed|failure|CI Success" "CI Success" "" ""
+req_case "duplicate-name newer failure after older success keeps pin" keep \
+    "7|completed|success|CI Success
+9|completed|failure|CI Success" "CI Success" "" "" "failure: CI Success"
+req_case "required context satisfied by legacy commit status" bump \
+    "1|completed|failure|optional-lint" "ci/legacy" "" "success|ci/legacy"
+req_case "required legacy status pending keeps pin" keep \
+    "" "ci/legacy" "" "pending|ci/legacy" "pending: ci/legacy"
+
+# (e) Both required sources unreadable: count-all fallback, one warning per slug.
+new_fixture main
+advance_origin
+gh_set "1|completed|success|build" "success 1"
+run_bump
+n_warn=$(printf '%s\n' "$out" | grep -c "no required checks readable for acme/foo")
+if [ "$rc" -eq 0 ] && [ "$(gitlink)" = "$C2" ] && [ "$n_warn" -eq 1 ] \
+    && printf '%s' "$out" | grep -q "falling back to all check-runs"; then
+    pass "unreadable required checks fall back to count-all with one warning"
+else
+    fail "fallback bump rc=$rc gitlink=$(gitlink) warnings=$n_warn out='$out'"
+fi
+new_fixture main
+advance_origin
+gh_set "1|completed|success|build
+2|completed|failure|optional-lint" "success 1"
+before=$(commits); run_bump
+expect_no_bump "fallback count-all still blocks on a red non-required check" "$before"
 
 [ "$fails" -eq 0 ]

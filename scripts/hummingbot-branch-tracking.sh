@@ -2916,12 +2916,92 @@ modular_owns_path() {
 ###############################################################################
 # Sub-package CI gate
 # -------------------
-# subpackage_ci_green <sub-dir> <sha>: returns 0 only when the commit's GitHub
-# check-runs and combined status are all green (completed with success/skipped/
-# neutral, none pending, at least one check present). Otherwise returns 1 and
+# subpackage_ci_green <sub-dir> <sha>: returns 0 only when the commit is
+# CI-green. When the repo's `development` branch has readable REQUIRED checks
+# (branch protection, else rulesets), only those decide: each must be present
+# and completed (check-run success/skipped/neutral, or legacy status success);
+# non-required runs are ignored. When no required checks are readable it warns
+# once per slug and falls back to counting every check-run plus the combined
+# status (all completed green, at least one present). Otherwise returns 1 and
 # prints a short reason on stdout. Fails closed on any API/URL error. Uses the
 # `gh` CLI (owner/repo derived from the submodule's origin URL).
+# SUBPKG_CI_CACHE_DIR (set by bump_tracked_subpackages) caches per-slug state
+# across the command-substitution subshells this function runs in.
 ###############################################################################
+# subpackage_required_checks <slug>: prints the de-duplicated required contexts
+# of the slug's development branch (empty when none/unreadable). Cached per slug.
+subpackage_required_checks() {
+    local slug="$1" cache="" out
+    if [ -n "${SUBPKG_CI_CACHE_DIR:-}" ]; then
+        cache="$SUBPKG_CI_CACHE_DIR/${slug//\//__}.required"
+        if [ -f "$cache" ]; then cat "$cache"; return 0; fi
+    fi
+    out="$(gh api "repos/$slug/branches/development/protection/required_status_checks" \
+        --jq '.contexts[]?, .checks[]?.context' 2>/dev/null)" || out=""
+    if [ -z "$out" ]; then
+        out="$(gh api "repos/$slug/rules/branches/development" \
+            --jq '.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context' \
+            2>/dev/null)" || out=""
+    fi
+    out="$(printf '%s\n' "$out" | sed '/^$/d' | sort -u)"
+    [ -n "$cache" ] && printf '%s\n' "$out" > "$cache"
+    printf '%s\n' "$out" | sed '/^$/d'
+}
+
+# subpackage_warn_no_required <slug>: one warning per slug per run (stderr, so
+# it is not swallowed into the caller's captured reason).
+subpackage_warn_no_required() {
+    local slug="$1" marker=""
+    if [ -n "${SUBPKG_CI_CACHE_DIR:-}" ]; then
+        marker="$SUBPKG_CI_CACHE_DIR/${slug//\//__}.warned"
+        [ -f "$marker" ] && return 0
+        : > "$marker"
+    fi
+    log_warning "auto-track: no required checks readable for $slug — falling back to all check-runs" >&2
+}
+
+# subpackage_required_green <slug> <sha> <required contexts> <runs>: runs are
+# "id|status|conclusion|name" lines. Echoes reason, returns 0 only if all green.
+subpackage_required_green() {
+    local slug="$1" sha="$2" required="$3" runs="$4"
+    local ctx id st concl name best_id best_st best_concl
+    local statuses="" statuses_loaded=false s_state s_ctx found_state
+    while IFS= read -r ctx; do
+        [ -z "$ctx" ] && continue
+        best_id=-1; best_st=""; best_concl=""
+        while IFS='|' read -r id st concl name; do
+            [ "$name" = "$ctx" ] || continue
+            case "$id" in ''|*[!0-9]*) continue ;; esac
+            if [ "$id" -gt "$best_id" ]; then
+                best_id="$id"; best_st="$st"; best_concl="$concl"
+            fi
+        done <<< "$runs"
+        if [ "$best_id" -ge 0 ]; then
+            if [ "$best_st" != "completed" ]; then echo "pending: $ctx"; return 1; fi
+            case "$best_concl" in
+                success|skipped|neutral) continue ;;
+                *) echo "$best_concl: $ctx"; return 1 ;;
+            esac
+        fi
+        if [ "$statuses_loaded" = false ]; then
+            if ! statuses="$(gh api "repos/$slug/commits/$sha/status" \
+                    --jq '.statuses[] | "\(.state)|\(.context)"' 2>/dev/null)"; then
+                echo "commit status API error"; return 1
+            fi
+            statuses_loaded=true
+        fi
+        found_state=""
+        while IFS='|' read -r s_state s_ctx; do
+            [ "$s_ctx" = "$ctx" ] && { found_state="$s_state"; break; }
+        done <<< "$statuses"
+        if [ -z "$found_state" ]; then echo "missing required: $ctx"; return 1; fi
+        if [ "$found_state" = "pending" ]; then echo "pending: $ctx"; return 1; fi
+        if [ "$found_state" != "success" ]; then echo "$found_state: $ctx"; return 1; fi
+    done <<< "$required"
+    echo "success"
+    return 0
+}
+
 subpackage_ci_green() {
     local sub="$1" sha="$2" url slug
     url="$(git -C "$sub" remote get-url origin 2>/dev/null)"
@@ -2933,17 +3013,27 @@ subpackage_ci_green() {
 
     local runs status_line
     if ! runs="$(gh api --paginate "repos/$slug/commits/$sha/check-runs?per_page=100" \
-            --jq '.check_runs[] | "\(.status) \(.conclusion // "none")"' 2>/dev/null)"; then
+            --jq '.check_runs[] | "\(.id)|\(.status)|\(.conclusion // "none")|\(.name)"' 2>/dev/null)"; then
         echo "check-runs API error"; return 1
     fi
+
+    local required
+    required="$(subpackage_required_checks "$slug")"
+    if [ -n "$required" ]; then
+        subpackage_required_green "$slug" "$sha" "$required" "$runs"
+        return
+    fi
+    subpackage_warn_no_required "$slug"
+
     if ! status_line="$(gh api "repos/$slug/commits/$sha/status" \
             --jq '"\(.state) \(.total_count)"' 2>/dev/null)"; then
         echo "commit status API error"; return 1
     fi
 
-    local n_runs=0 st concl
-    while read -r st concl; do
-        [ -z "$st" ] && continue
+    local n_runs=0 st concl _id _name
+    while IFS='|' read -r _id st concl _name; do
+        [ -z "$_id$st" ] && continue
+        case "$_id" in ''|*[!0-9]*) echo "unparseable check-runs output"; return 1 ;; esac
         n_runs=$((n_runs + 1))
         if [ "$st" != "completed" ]; then
             echo "pending"; return 1
@@ -3081,6 +3171,12 @@ bump_tracked_subpackages() {
     require_ci="$(yq -r 'if has("subpackage_tracking_require_ci") then .subpackage_tracking_require_ci else true end' "$BRANCH_CONFIG" 2>/dev/null)"
     [ "$require_ci" = "false" ] || require_ci=true
 
+    # Per-run cache of required-check lookups (the CI gate runs in subshells).
+    local SUBPKG_CI_CACHE_DIR=""
+    if [ "$require_ci" = "true" ]; then
+        SUBPKG_CI_CACHE_DIR="$(mktemp -d 2>/dev/null)" || SUBPKG_CI_CACHE_DIR=""
+    fi
+
     local failed=""
     while read -r name branch; do
         [ -z "$name" ] && continue
@@ -3168,6 +3264,8 @@ bump_tracked_subpackages() {
         fi
         log_operation "auto-track: $name ${recorded:0:7} -> ${target:0:7} (origin/$branch)"
     done <<< "$entries"
+
+    [ -n "$SUBPKG_CI_CACHE_DIR" ] && rm -rf "$SUBPKG_CI_CACHE_DIR"
 
     if [ -n "$failed" ]; then
         log_warning "auto-track: NOT bumped (stage failed): $failed"
