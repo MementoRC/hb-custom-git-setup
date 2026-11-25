@@ -892,6 +892,14 @@ target_branches:
         disable_when_in_development: false
         parent: _for_overlay/liquidations-feed-port
 
+      - name: _for_overlay/connector-utils-port
+        enabled: true
+        tier: feature
+        description: "connector-utils parent port (plan #74): hummingbot/connector/utils.py re-exports hb connector_utils (numeric id + trading-pair helpers direct; get_new_client_order_id thin wrapper keeps microsecond nonce and patchable get_tracking_nonce); 17 call sites -> (bits, nonce=nc.get_tracking_nonce()). Verified 2026-11-25 on overlay 532adef6: 467 passed, 1 skipped."
+        permanent: true
+        disable_when_in_development: false
+        parent: _for_overlay/subpackage-wiring
+
       - name: _for_overlay/closure-root
         enabled: true
         tier: feature
