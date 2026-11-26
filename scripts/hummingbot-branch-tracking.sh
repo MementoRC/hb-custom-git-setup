@@ -1035,12 +1035,14 @@ is_logical_conflict_path() {
     esac
 }
 
-# is_ci_base_owned_path <path>: 0 if <path> is a ci-base pixi CI file whose
-# upstream (conda CI) edits are irrelevant: a development conflict on it
-# resolves to ci-base's version (KEEP-OURS), evaluated before the logical rule.
+# is_ci_base_owned_path <path>: 0 if <path> is a ci-base pixi infra file whose
+# upstream (conda CI / uv packaging, PR #8214) edits are irrelevant: a
+# development conflict on it resolves to ci-base's version (KEEP-OURS; if
+# ci-base deleted it, it stays deleted), evaluated before the logical rule.
 is_ci_base_owned_path() {
     case "$1" in
         .github/actions/install_env_and_hb/action.yml|.github/workflows/workflow.yml) return 0 ;;
+        Makefile|install|Dockerfile|pyproject.toml|setup.py) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -1052,7 +1054,9 @@ is_ci_base_owned_path() {
 # development (incremental)" + "Dev-Merged: <full sha>" trailer (same format as
 # build_ci_base_from_seed). No-op (return 0) if development is already merged.
 # Conflict policy, every path checked BEFORE any is resolved:
-#   1. pyproject.toml|conftest.py|.github/*|test/conftest.py -> abort
+#   1. is_ci_base_owned_path (pixi infra, incl. pyproject.toml) -> ours
+#      (stays deleted if ci-base deleted it), checked first;
+#      conftest.py|.github/*|test/conftest.py -> abort
 #      (is_logical_conflict_path, shared with build_ci_base_from_seed)
 #      .pre-commit-config.yaml -> ours
 #   2. path owned by a _for_ci/* merge (compute_for_ci_owned, pre-merge) -> abort
@@ -1127,6 +1131,9 @@ merge_development_incremental() {
         for f in "${ours_paths[@]}"; do
             if is_ci_base_owned_path "$f"; then
                 log_operation "KEEP-OURS $f (upstream ${CI_BASE_LAST_DEV_MERGED:0:12}..${d_new:0:12})"
+                if [ "$f" = "pyproject.toml" ]; then
+                    log_operation "UPSTREAM-DEPS-DRIFT: pyproject.toml kept ours; mirror dependency changes from upstream ${CI_BASE_LAST_DEV_MERGED:0:12}..${d_new:0:12} into [tool.pixi.dependencies]"
+                fi
             fi
             if git ls-files -u -- "$f" | awk '$3==2{f=1} END{exit !f}'; then
                 git checkout --ours -- "$f" && git add -- "$f"
@@ -1244,8 +1251,15 @@ build_ci_base_from_seed() {
             return 1
         fi
         for f in "${ours_conflicts[@]}"; do
-            git checkout --ours "$f" 2>/dev/null
-            git add "$f"
+            if [ "$f" = "pyproject.toml" ]; then
+                log_operation "UPSTREAM-DEPS-DRIFT: pyproject.toml kept ours; mirror dependency changes from upstream seed..${dev_sha:0:12} into [tool.pixi.dependencies]"
+            fi
+            if git ls-files -u -- "$f" | awk '$3==2{f=1} END{exit !f}'; then
+                git checkout --ours "$f" 2>/dev/null
+                git add "$f"
+            else
+                git rm -q -f -- "$f"
+            fi
         done
         for f in "${format_only[@]}"; do
             git checkout --theirs "$f" 2>/dev/null
