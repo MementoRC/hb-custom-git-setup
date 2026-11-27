@@ -642,6 +642,15 @@ target_branches:
         permanent: false
         disable_when_in_development: true
 
+      - name: _for_bleed/poe-executor-limit-price
+        enabled: true
+        base: modular
+        parent: _for_bleed/modular-regen
+        tier: feature
+        description: "PositionOnExchangeExecutor STOP_LOSS_LIMIT limit price (stop_loss_limit_offset) + limit_price kwarg forwarding (#85 P5)"
+        permanent: false
+        disable_when_in_development: true
+
       - name: _for_bleed/wire-state-store
         enabled: true
         base: modular
