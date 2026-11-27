@@ -4030,6 +4030,7 @@ _overlay_gate_tolerates_failures() {
 run_tests() {
     local target_branch="$1"
     local source_branch="${2:-}"
+    local _cython_built=false
 
     # Skip test verification during rebuild — the branch was just recreated
     # from development, so the test verifier can't resolve refs properly.
@@ -4107,6 +4108,18 @@ run_tests() {
                     "overlay: rebuilding extensions before merge-time pytest for ${source_branch}" \
                     "${RUN_LOG_DIR:-$LOG_PATH}/overlay_build_${source_branch//\//_}.log"
             fi
+            # Per-branch merge path only (HEAD is the --no-ff merge commit): the first-parent
+            # diff is the merged branch's own net change, not the tier's delta vs development.
+            if [ -n "$source_branch" ] && git -C "$REPO_PATH" rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1 \
+                && git -C "$REPO_PATH" diff --name-only HEAD^1 HEAD 2>/dev/null | grep -qE '\.(pyx|pxd)$'; then
+                local build_log="${pytest_log%.log}_build.log"
+                _cython_built=true
+                log_step "Merged branch touches .pyx/.pxd - rebuilding Cython extensions before selected tests"
+                if ! _run_bounded_build "$_pixi_cmd" "$build_log"; then
+                    log_result false "Cython build FAILED before selected tests; see $build_log"
+                    return 1
+                fi
+            fi
             # shellcheck disable=SC2086
             (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" $test_files -v \
                 --junitxml="${pytest_log%.log}.xml" -o junit_family=xunit2) > "$pytest_log" 2>&1
@@ -4136,10 +4149,12 @@ run_tests() {
             # across the whole suite. `pixi run pytest` bypasses the `test` task's
             # build dependency, so the rebuild must be explicit here.
             local build_log="${pytest_log%.log}_build.log"
-            log_step "Rebuilding Cython extensions before full suite (pixi run build)"
-            if ! _run_bounded_build "$_pixi_cmd" "$build_log"; then
-                log_result false "Cython build FAILED before full suite; see $build_log"
-                return 1
+            if [ "$_cython_built" != true ]; then
+                log_step "Rebuilding Cython extensions before full suite (pixi run build)"
+                if ! _run_bounded_build "$_pixi_cmd" "$build_log"; then
+                    log_result false "Cython build FAILED before full suite; see $build_log"
+                    return 1
+                fi
             fi
             (cd "$REPO_PATH" && "$_pixi_cmd" run --frozen pytest "${PYTEST_GATE_ARGS[@]}" -v \
                 --junitxml="${pytest_log%.log}.xml" -o junit_family=xunit2) > "$pytest_log" 2>&1
