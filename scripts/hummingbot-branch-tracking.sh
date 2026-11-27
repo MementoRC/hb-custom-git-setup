@@ -4110,7 +4110,8 @@ run_tests() {
             fi
             # Per-branch merge path only (HEAD is the --no-ff merge commit): the first-parent
             # diff is the merged branch's own net change, not the tier's delta vs development.
-            if [ -n "$source_branch" ] && git -C "$REPO_PATH" rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1 \
+            # Overlay merges already rebuild via _overlay_rebuild_extensions above; pixi run build fails there (no sub-packages/).
+            if [ "$target_branch" != "overlay" ] && [ -n "$source_branch" ] && git -C "$REPO_PATH" rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1 \
                 && git -C "$REPO_PATH" diff --name-only HEAD^1 HEAD 2>/dev/null | grep -qE '\.(pyx|pxd)$'; then
                 local build_log="${pytest_log%.log}_build.log"
                 _cython_built=true
