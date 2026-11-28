@@ -70,6 +70,13 @@ _finish_manual_rebuild_summary() {
             sed 's/^/  /' "$RUN_LOG_DIR/modular_classifier_counts.txt"
         } >> "$MANUAL_REBUILD_SUMMARY"
     fi
+    if [ -s "$RUN_LOG_DIR/branch_config_lint.txt" ]; then
+        {
+            echo ""
+            echo "Config lint:"
+            sed 's/^/  /' "$RUN_LOG_DIR/branch_config_lint.txt"
+        } >> "$MANUAL_REBUILD_SUMMARY"
+    fi
     return 0
 }
 
@@ -5099,6 +5106,13 @@ main() {
   if ! validate_environment; then
       log_error "Environment validation failed."
       exit 1
+  fi
+
+  # Non-fatal lint of parent: links the rebuild cannot order
+  if [ -n "${RUN_LOG_DIR:-}" ] && [ -d "$RUN_LOG_DIR" ]; then
+      lint_branch_tracking_parents "$BRANCH_CONFIG" "$RUN_LOG_DIR/branch_config_lint.txt"
+  else
+      lint_branch_tracking_parents "$BRANCH_CONFIG"
   fi
 
   # Gate state hoisted: the ci-base gate now runs inside the rebuild block (Step 1c),

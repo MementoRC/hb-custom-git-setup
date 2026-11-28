@@ -436,6 +436,54 @@ validate_environment() {
 }
 
 ###############################################################################
+# lint_branch_tracking_parents <config_file> [<out_file>]
+# -------------------------------------------------------
+# Non-fatal lint of `parent:` links the rebuild cannot order (parent only
+# sequences within ONE target's tracked_branches; infra tier is emitted first).
+# Findings: PARENT_NOT_IN_LIST, TIER_ORDER, PARENT_DISABLED. A missing
+# `enabled` counts as disabled (same as is_branch_enabled). Always returns 0.
+###############################################################################
+lint_branch_tracking_parents() {
+    local cfg="$1" out="${2:-}" findings="" target rows
+    local -A tier enabled
+    local name parent t en child_en p_en line
+    local targets
+    targets="$(yq -r '.target_branches // {} | keys | .[]' "$cfg" 2>/dev/null)" || targets=""
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        rows="$(yq -r ".target_branches[\"$target\"].tracked_branches // [] | .[] | .name + \"|\" + (.parent // \"\") + \"|\" + (.tier // \"none\") + \"|\" + (.enabled // false | tostring)" "$cfg" 2>/dev/null)" || rows=""
+        tier=() enabled=()
+        while IFS='|' read -r name parent t en; do
+            [ -n "$name" ] || continue
+            tier[$name]="$t"
+            enabled[$name]="$en"
+        done <<< "$rows"
+        while IFS='|' read -r name parent t en; do
+            [ -n "$name" ] && [ -n "$parent" ] && [ "$parent" != "null" ] || continue
+            if [ -z "${tier[$parent]+x}" ]; then
+                line="PARENT_NOT_IN_LIST target=$target branch=$name parent=$parent"
+            else
+                line=""
+                if [ "$t" = "infrastructure" ] && [ "${tier[$parent]}" != "infrastructure" ]; then
+                    line="TIER_ORDER target=$target branch=$name (infrastructure) parent=$parent (${tier[$parent]})"
+                fi
+                child_en="$en" p_en="${enabled[$parent]}"
+                if [ "$child_en" = "true" ] && [ "$p_en" != "true" ]; then
+                    [ -n "$line" ] && findings+="$line"$'\n'
+                    line="PARENT_DISABLED target=$target branch=$name parent=$parent"
+                fi
+            fi
+            [ -n "$line" ] && findings+="$line"$'\n'
+        done <<< "$rows"
+    done <<< "$targets"
+    while IFS= read -r line; do
+        [ -n "$line" ] && log_warning "$line"
+    done <<< "$findings"
+    [ -n "$out" ] && printf '%s' "$findings" > "$out"
+    return 0
+}
+
+###############################################################################
 # 8) Usage Example (Optional)
 ###############################################################################
 # show_usage

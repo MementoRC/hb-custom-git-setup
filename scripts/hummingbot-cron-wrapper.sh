@@ -806,6 +806,14 @@ fi
 ###############################################################################
 log_footer
 
+# Non-fatal branch-tracking.yaml parent: lint written by the child (shared RUN_ID/RUN_LOG_DIR)
+if [ -s "$RUN_LOG_DIR/branch_config_lint.txt" ]; then
+    while IFS= read -r _lint_line; do
+        [ -n "$_lint_line" ] && ERRORS+=("branch-tracking.yaml: $_lint_line")
+    done < "$RUN_LOG_DIR/branch_config_lint.txt"
+    unset _lint_line
+fi
+
 write_run_summary "$SUMMARY_FILE" "$OVERALL_STATUS" "$UPSTREAM_STATUS" "$TRACKING_STATUS" "$INTERFACE_STATUS" "$CRON_LOG" ERRORS "$MERGE_FAILURES"
 
 # Append submodule sync detail (written after write_run_summary to avoid overwrite)
